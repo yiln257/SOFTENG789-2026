@@ -69,8 +69,8 @@ export const releaseDeviceLock = async (testId, teamId) => {
  */
 export const incrementQuestionAttempts = async (testId, teamId, seq) => {
     const key = `test:${testId}:team:${teamId}:q:${seq}:attempts`;
-    // 自增 1
-    return await redisClient.incr(key); 
+    // INCR 会在键不存在时设为 0 然后加 1 (返回 1)，后续每次调用累加
+    return await redisClient.incr(key);
 };
 
 export const getQuestionAttempts = async (testId, teamId, seq) => {
@@ -78,3 +78,4 @@ export const getQuestionAttempts = async (testId, teamId, seq) => {
     const attempts = await redisClient.get(key);
     return attempts ? parseInt(attempts, 10) : 0;
 };
+

@@ -18,7 +18,7 @@ const questionSchema = new mongoose.Schema({
 const testSchema = new mongoose.Schema({
     status: {
         type: String,
-        enum: ['draft', 'published', 'paused'],
+        enum: ['draft', 'published', 'closed'],
         default: 'draft'
     },
     scoringRules: {
