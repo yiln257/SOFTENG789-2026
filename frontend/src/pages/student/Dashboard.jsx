@@ -1,143 +1,296 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../hooks/useSocket';
 import { useGeoLocation } from '../../hooks/useGeoLocation';
 import request from '../../api/request';
 
+const emptyMate = () => ({ upi: '', password: '' });
+
 export default function StudentDashboard() {
-    const { user, logout } = useAuth();
+    const { user, logout, updateUser } = useAuth();
     const navigate = useNavigate();
-    const socket = useSocket(); 
+    const socket = useSocket();
     const { getPosition, isLocating, geoError } = useGeoLocation();
 
-    const [teamInfo, setTeamInfo] = useState(null);
-    const [statusMsg, setStatusMsg] = useState('请点击下方按钮进行考前准备');
-    const [isReady, setIsReady] = useState(false); 
+    const [lobby, setLobby] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [statusMsg, setStatusMsg] = useState('');
+    const [teamMsg, setTeamMsg] = useState('');
+    const [startMsg, setStartMsg] = useState('');
+    const [creatingTeam, setCreatingTeam] = useState(false);
+    const [teammates, setTeammates] = useState([emptyMate(), emptyMate()]);
 
-    // 1. 页面加载时获取本组信息
-    useEffect(() => {
-        const fetchTeamInfo = async () => {
-            try {
-                const res = await request.get('/student/team-info');
-                if (res.success) setTeamInfo(res.team);
-            } catch (err) {
-                console.error('获取队伍信息失败', err);
+    const fetchLobby = async () => {
+        try {
+            const res = await request.get('/student/lobby');
+            if (res.success) {
+                setLobby(res);
+                updateUser({
+                    teamId: res.team?._id || null,
+                    team: res.team || null
+                });
             }
-        };
-        fetchTeamInfo();
+        } catch (error) {
+            setStatusMsg(error.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchLobby();
     }, []);
 
-    // 2. 当获取到队伍和 Socket 实例后，立即主动发送事件加入后端的队伍房间
     useEffect(() => {
-        if (socket && (teamInfo?._id || user?.teamId)) {
-            const currentTeamId = teamInfo?._id || user?.teamId;
-            const currentStudentId = user?._id || user?.id;
-            
-            socket.emit('JOIN_TEAM_ROOM', { teamId: currentTeamId, studentId: currentStudentId });
-        }
-    }, [socket, teamInfo, user]);
+        if (!socket) return undefined;
 
-    // 3. ✨【核心修复】完善 Socket 监听逻辑（加入全组就位和老师发卷的监听）
-    useEffect(() => {
-        if (!socket) return;
-
-        // 监听1：如果后端判定全组就位（或有人拿到锁），通知进入
-        const handleTeamReady = (data) => {
-            if (isReady && data.testId) {
-                setStatusMsg('系统已分配答题设备，正在进入考场...');
-                setTimeout(() => navigate(`/student/test/${data.testId}`), 1000);
-            }
-        };
-
-        // 监听2：如果学生早就 Ready 了，老师后来才点发布测试，自动拉进考场
-        const handleTestStarted = (data) => {
-            if (isReady && data.testId) {
-                setStatusMsg('老师已发布测试，正在进入考场...');
-                setTimeout(() => navigate(`/student/test/${data.testId}`), 1000);
-            }
-        };
-
-        socket.on('TEAM_ALL_READY', handleTeamReady);
-        socket.on('TEST_STARTED', handleTestStarted);
+        const refresh = () => fetchLobby();
+        socket.on('TEAM_UPDATED', refresh);
+        socket.on('TEST_STARTED', refresh);
+        socket.on('TEST_ENDED', refresh);
 
         return () => {
-            socket.off('TEAM_ALL_READY', handleTeamReady);
-            socket.off('TEST_STARTED', handleTestStarted);
+            socket.off('TEAM_UPDATED', refresh);
+            socket.off('TEST_STARTED', refresh);
+            socket.off('TEST_ENDED', refresh);
         };
-    }, [socket, isReady, navigate]);
+    }, [socket]);
 
-    // 4. GPS就位校验与状态写入
-    const handleReadyCheck = async () => {
-        if (!teamInfo?._id) return;
+    useEffect(() => {
+        const teamId = lobby?.team?._id;
+        if (socket && teamId) {
+            socket.emit('join_team', { teamId, studentId: user?.id || user?._id });
+        }
+    }, [socket, lobby?.team?._id, user]);
 
+    const checkInBadge = useMemo(() => {
+        if (!lobby?.activeTest) return <span className="badge warning">Waiting for test</span>;
+        if (!lobby.checkIn) return <span className="badge">Not checked in</span>;
+        if (lobby.checkIn.status === 'passed') return <span className="badge success">Checked in</span>;
+        return <span className="badge danger">Failed</span>;
+    }, [lobby]);
+
+    const handleCheckIn = async () => {
+        setStatusMsg('');
         try {
             const pos = await getPosition();
-            
             const res = await request.post('/student/ready', {
-                teamId: teamInfo._id,
                 lat: pos.lat,
                 lng: pos.lng
             });
 
-            if (res.success) {
-                setIsReady(true);
-                setStatusMsg(res.message || 'GPS校验通过，等待教师发卷...');
-                
-                // 如果后端告知测试已经在进行中，直接跳入
-                if (res.testPublished && res.testId) {
-                    setTimeout(() => navigate(`/student/test/${res.testId}`), 1000);
-                }
-            }
-        } catch (err) {
-            // 🚨 如果 GPS 校验失败（距离过远），保持 isReady 为 false，允许学生重试
-            setIsReady(false); 
-            // 提取后端传过来的 message，例如 "距离过远 (800米)..."
-            const errorMsg = err.response?.data?.message || err.message || '定位失败，请重试';
-            setStatusMsg(errorMsg);
+            setStatusMsg(res.message);
+            await fetchLobby();
+        } catch (error) {
+            setStatusMsg(error.message);
         }
     };
 
+    const updateMate = (index, field, value) => {
+        setTeammates((current) => current.map((mate, i) => (
+            i === index ? { ...mate, [field]: value } : mate
+        )));
+    };
+
+    const handleCreateTeam = async (event) => {
+        event.preventDefault();
+        setTeamMsg('');
+        setCreatingTeam(true);
+
+        try {
+            const payload = teammates.map((mate) => ({
+                upi: mate.upi.trim(),
+                password: mate.password
+            }));
+            const res = await request.post('/student/team', { teammates: payload });
+            setTeamMsg(res.message || 'Team created successfully.');
+            updateUser({ teamId: res.team?._id || null, team: res.team || null });
+            await fetchLobby();
+        } catch (error) {
+            setTeamMsg(error.message);
+        } finally {
+            setCreatingTeam(false);
+        }
+    };
+
+    const handleStartTest = () => {
+        setStartMsg('');
+
+        if (!lobby?.activeTest) {
+            setStartMsg('Waiting for the teacher to publish the test.');
+            return;
+        }
+
+        if (!lobby?.team) {
+            setStartMsg('The test has been published. Please finish teaming first.');
+            return;
+        }
+
+        if (!lobby.team.isLeader) {
+            setStartMsg('The test has started. Please share the team leader device to answer.');
+            return;
+        }
+
+        navigate(`/student/test/${lobby.activeTest.id}`);
+    };
+
+    const feedbackEnabled = lobby?.feedback?.available;
+
+    if (loading) {
+        return <main className="app-shell">Loading lobby...</main>;
+    }
+
     return (
-        <div style={{ padding: '20px', maxWidth: '600px', margin: '0 auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                <h2>欢迎，{user.name}</h2>
-                <button onClick={logout} style={{ padding: '5px 10px', color: 'white', background: '#dc3545', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>退出登录</button>
-            </div>
+        <main className="app-shell">
+            <header className="topbar">
+                <div>
+                    <h1>Student Lobby</h1>
+                    <p className="subtitle">{user?.name} · {user?.upi}</p>
+                </div>
+                <button className="btn ghost" onClick={logout}>Sign Out</button>
+            </header>
 
-            <div style={{ background: '#f8f9fa', padding: '20px', borderRadius: '8px', marginBottom: '20px' }}>
-                <h3 style={{ marginTop: 0 }}>👥 我的队伍: {teamInfo?.teamName || '加载中...'}</h3>
-                <ul style={{ paddingLeft: '20px', margin: 0 }}>
-                    <li style={{ marginBottom: '8px', fontWeight: 'bold' }}>
-                        {user.name} (你) - {user.upi}
-                    </li>
-                    {teamInfo?.members?.filter(m => m.upi !== user.upi).map(member => (
-                        <li key={member.upi} style={{ marginBottom: '8px', color: '#555' }}>
-                            {member.name} - {member.upi}
-                        </li>
-                    ))}
-                </ul>
-            </div>
+            <section className="grid">
+                <article className="card stack">
+                    <div className="row">
+                        <h2>Check-in</h2>
+                        <div className="spacer" />
+                        {checkInBadge}
+                    </div>
+                    <p className="muted">
+                        {lobby?.activeTest
+                            ? `Live test: ${lobby.activeTest.currentSeq} of ${lobby.activeTest.totalQuestions}`
+                            : 'No live test has been published yet.'}
+                    </p>
+                    <button className="btn" onClick={handleCheckIn} disabled={isLocating}>
+                        {isLocating ? 'Getting GPS...' : 'Check In with GPS'}
+                    </button>
+                    {geoError && <div className="error">{geoError}</div>}
+                    {statusMsg && <p className="status-text">{statusMsg}</p>}
+                </article>
 
-            <div style={{ border: '2px dashed #ccc', padding: '30px', textAlign: 'center', borderRadius: '8px' }}>
-                <h3 style={{ color: isReady ? 'green' : '#d9534f', minHeight: '30px' }}>
-                    {statusMsg}
-                </h3>
-                {geoError && <p style={{ color: 'red', fontSize: '12px' }}>定位错误详情: {geoError}</p>}
+                <article className="card stack">
+                    <div className="row">
+                        <h2>Team</h2>
+                        <div className="spacer" />
+                        <span className={lobby?.team ? 'badge success' : 'badge'}>{lobby?.team ? 'Ready' : 'Open'}</span>
+                    </div>
 
-                {/* ✨ 优化了按钮逻辑与文案：只要没 isReady，就允许学生无限重试 */}
-                <button 
-                    onClick={handleReadyCheck} 
-                    disabled={isLocating || isReady}
-                    style={{ 
-                        marginTop: '20px', padding: '12px 30px', fontSize: '16px', 
-                        background: isReady ? '#28a745' : '#007bff', 
-                        color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' 
-                    }}
-                >
-                    {isLocating ? '定位中...' : (isReady ? '✅ 准备就绪，等待开考' : (statusMsg.includes('过远') ? '📍 距离过远，点击重试' : '📍 开始准备 (获取GPS)'))}
-                </button>
-            </div>
-        </div>
+                    {lobby?.team ? (
+                        <div className="stack">
+                            <table className="table">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>UPI</th>
+                                        <th>Role</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {lobby.team.members?.map((member) => {
+                                        const leaderId = lobby.team.leaderId?._id || lobby.team.leaderId;
+                                        const isLeader = leaderId?.toString() === member._id?.toString();
+                                        return (
+                                            <tr key={member.upi}>
+                                                <td>{member.name}</td>
+                                                <td>{member.upi}</td>
+                                                <td>{isLeader ? 'Leader' : 'Member'}</td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                            {!lobby.team.isLeader && (
+                                <p className="muted">Your team has been created. Teaming is locked for this test.</p>
+                            )}
+                        </div>
+                    ) : (
+                        <form className="stack" onSubmit={handleCreateTeam}>
+                            {teammates.map((mate, index) => (
+                                <div className="row" key={index}>
+                                    <input
+                                        className="field"
+                                        placeholder={`Teammate ${index + 1} UPI`}
+                                        value={mate.upi}
+                                        onChange={(event) => updateMate(index, 'upi', event.target.value)}
+                                        required
+                                    />
+                                    <input
+                                        className="field"
+                                        type="password"
+                                        placeholder="Password"
+                                        value={mate.password}
+                                        onChange={(event) => updateMate(index, 'password', event.target.value)}
+                                        required
+                                    />
+                                </div>
+                            ))}
+                            <div className="row wrap">
+                                <button
+                                    className="btn secondary"
+                                    type="button"
+                                    disabled={teammates.length >= 3}
+                                    onClick={() => setTeammates((current) => [...current, emptyMate()])}
+                                >
+                                    Add Teammate
+                                </button>
+                                <button
+                                    className="btn ghost"
+                                    type="button"
+                                    disabled={teammates.length <= 2}
+                                    onClick={() => setTeammates((current) => current.slice(0, -1))}
+                                >
+                                    Remove
+                                </button>
+                                <button className="btn" type="submit" disabled={creatingTeam}>
+                                    {creatingTeam ? 'Creating...' : 'Create Team'}
+                                </button>
+                            </div>
+                            {teamMsg && <p className="status-text">{teamMsg}</p>}
+                        </form>
+                    )}
+                </article>
+
+                <article className="card stack">
+                    <div className="row">
+                        <h2>Start Test</h2>
+                        <div className="spacer" />
+                        <span className={lobby?.activeTest ? 'badge success' : 'badge warning'}>
+                            {lobby?.activeTest ? 'Published' : 'Waiting'}
+                        </span>
+                    </div>
+                    <p className="muted">
+                        {lobby?.team?.isLeader
+                            ? 'Leader device'
+                            : lobby?.team
+                                ? 'Member device'
+                                : 'No team yet'}
+                    </p>
+                    <button className="btn" onClick={handleStartTest}>Start Test</button>
+                    {startMsg && <p className="status-text">{startMsg}</p>}
+                </article>
+
+                <article className="card stack">
+                    <div className="row">
+                        <h2>Feedback</h2>
+                        <div className="spacer" />
+                        <span className={feedbackEnabled ? 'badge success' : 'badge'}>{feedbackEnabled ? 'Open' : 'Locked'}</span>
+                    </div>
+                    <p className="muted">
+                        {feedbackEnabled
+                            ? `Open until ${new Date(lobby.feedback.closesAt).toLocaleTimeString()}`
+                            : 'Available for 10 minutes after a completed test.'}
+                    </p>
+                    <button
+                        className="btn"
+                        disabled={!feedbackEnabled}
+                        onClick={() => navigate(`/student/feedback/${lobby.feedback.testId}`)}
+                    >
+                        Open Feedback
+                    </button>
+                </article>
+            </section>
+        </main>
     );
 }

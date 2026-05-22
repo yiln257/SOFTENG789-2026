@@ -1,0 +1,357 @@
+:root {
+    --bg: #f4f8ff;
+    --surface: #ffffff;
+    --surface-soft: #eaf2ff;
+    --border: #cfe0ff;
+    --text: #0f172a;
+    --muted: #64748b;
+    --primary: #2563eb;
+    --primary-dark: #1d4ed8;
+    --primary-soft: #dbeafe;
+    --success: #15803d;
+    --danger: #dc2626;
+    --warning: #b45309;
+    --shadow: 0 12px 30px rgba(37, 99, 235, 0.08);
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: var(--text);
+    background: var(--bg);
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    min-width: 320px;
+    min-height: 100vh;
+    background: var(--bg);
+}
+
+button,
+input,
+textarea {
+    font: inherit;
+}
+
+button {
+    border: 0;
+}
+
+.app-shell {
+    width: min(1120px, calc(100% - 32px));
+    margin: 0 auto;
+    padding: 32px 0;
+}
+
+.app-shell.narrow {
+    width: min(720px, calc(100% - 32px));
+}
+
+.topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.topbar h1,
+.topbar h2 {
+    margin: 0;
+    font-size: 28px;
+    line-height: 1.2;
+}
+
+.subtitle {
+    margin: 6px 0 0;
+    color: var(--muted);
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px;
+}
+
+.grid.three {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+    padding: 20px;
+}
+
+.card h2,
+.card h3 {
+    margin: 0 0 14px;
+    font-size: 20px;
+}
+
+.panel {
+    background: var(--surface-soft);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+}
+
+.row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.row.wrap {
+    flex-wrap: wrap;
+}
+
+.stack {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.spacer {
+    flex: 1;
+}
+
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 40px;
+    padding: 10px 14px;
+    border-radius: 6px;
+    background: var(--primary);
+    color: white;
+    cursor: pointer;
+    transition: background 160ms ease, opacity 160ms ease, transform 160ms ease;
+}
+
+.btn:hover:not(:disabled) {
+    background: var(--primary-dark);
+}
+
+.btn:active:not(:disabled) {
+    transform: translateY(1px);
+}
+
+.btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+.btn.secondary {
+    background: var(--primary-soft);
+    color: var(--primary-dark);
+}
+
+.btn.secondary:hover:not(:disabled) {
+    background: #bfdbfe;
+}
+
+.btn.danger {
+    background: var(--danger);
+}
+
+.btn.warning {
+    background: var(--warning);
+}
+
+.btn.ghost {
+    background: transparent;
+    color: var(--primary-dark);
+    border: 1px solid var(--border);
+}
+
+.field {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    background: white;
+    color: var(--text);
+}
+
+.field:focus {
+    outline: 2px solid var(--primary-soft);
+    border-color: var(--primary);
+}
+
+.segmented {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+    padding: 6px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-soft);
+}
+
+.segmented button {
+    border-radius: 6px;
+    padding: 10px;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+}
+
+.segmented button.active {
+    background: var(--primary);
+    color: white;
+}
+
+.badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 26px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: var(--primary-soft);
+    color: var(--primary-dark);
+    font-weight: 600;
+    font-size: 13px;
+}
+
+.badge.success {
+    background: #dcfce7;
+    color: var(--success);
+}
+
+.badge.danger {
+    background: #fee2e2;
+    color: var(--danger);
+}
+
+.badge.warning {
+    background: #fef3c7;
+    color: var(--warning);
+}
+
+.muted {
+    color: var(--muted);
+}
+
+.status-text {
+    min-height: 24px;
+    margin: 8px 0 0;
+    color: var(--muted);
+}
+
+.table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.table th,
+.table td {
+    padding: 10px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    vertical-align: top;
+}
+
+.table th {
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.progress {
+    height: 10px;
+    width: 100%;
+    overflow: hidden;
+    border-radius: 999px;
+    background: #dbeafe;
+}
+
+.progress span {
+    display: block;
+    height: 100%;
+    background: var(--primary);
+    border-radius: inherit;
+}
+
+.option-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.option-btn {
+    min-height: 96px;
+    justify-content: flex-start;
+    text-align: left;
+    align-items: flex-start;
+    gap: 10px;
+    background: white;
+    color: var(--text);
+    border: 1px solid var(--border);
+}
+
+.option-btn:hover:not(:disabled) {
+    background: var(--surface-soft);
+}
+
+.option-btn.correct {
+    background: #dcfce7;
+    border-color: #86efac;
+    color: #14532d;
+}
+
+.option-btn.wrong {
+    background: #f1f5f9;
+    color: #94a3b8;
+}
+
+.option-letter {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    background: var(--primary);
+    color: white;
+    font-weight: 700;
+}
+
+.login-card {
+    width: min(420px, calc(100% - 32px));
+    margin: 80px auto;
+}
+
+.error {
+    color: var(--danger);
+}
+
+.success {
+    color: var(--success);
+}
+
+@media (max-width: 760px) {
+    .app-shell {
+        width: min(100% - 24px, 1120px);
+        padding: 20px 0;
+    }
+
+    .topbar,
+    .row {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .grid,
+    .grid.three,
+    .option-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .table {
+        font-size: 14px;
+    }
+}

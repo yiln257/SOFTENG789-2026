@@ -1,50 +1,44 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { io } from 'socket.io-client';
 import { useAuth } from '../context/AuthContext';
 
 const SOCKET_URL = 'http://localhost:5000';
 
 export const useSocket = () => {
-    const socketRef = useRef(null);
+    const [socket, setSocket] = useState(null);
     const { user } = useAuth();
 
     useEffect(() => {
-        // 如果没有用户信息，不建立连接
-        if (!user) return;
+        if (!user) return undefined;
 
-        // 初始化连接
-        socketRef.current = io(SOCKET_URL, {
+        const nextSocket = io(SOCKET_URL, {
             reconnectionAttempts: 5,
-            reconnectionDelay: 1000,
+            reconnectionDelay: 1000
         });
 
-        const socket = socketRef.current;
-
-        socket.on('connect', () => {
-            console.log('🟢 Socket已连接:', socket.id);
-            
-            // 根据身份发送加入指令
+        nextSocket.on('connect', () => {
             if (user.role === 'teacher') {
-                socket.emit('teacher_join');
-            } else if (user.role === 'student') {
-                socket.emit('join_team', { 
-                    teamId: user.teamId, 
-                    studentId: user._id || user.upi 
-                });
+                nextSocket.emit('teacher_join');
+            }
+
+            if (user.role === 'student') {
+                const studentId = user.id || user._id;
+                nextSocket.emit('join_user', { studentId });
+
+                const teamId = user.team?._id || user.teamId;
+                if (teamId) {
+                    nextSocket.emit('join_team', { teamId, studentId });
+                }
             }
         });
 
-        socket.on('disconnect', () => {
-            console.log('🔴 Socket已断开');
-        });
+        setSocket(nextSocket);
 
-        // 组件卸载时断开连接，防止内存泄漏
         return () => {
-            socket.disconnect();
-            socketRef.current = null;
+            nextSocket.disconnect();
+            setSocket(null);
         };
     }, [user]);
 
-    // 返回 socket 实例，供页面监听 test_published, question_changed 等事件
-    return socketRef.current;
+    return socket;
 };

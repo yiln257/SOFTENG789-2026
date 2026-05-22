@@ -1,21 +1,24 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import request from '../../api/request';
+
+const rateToNumber = (value) => Number.parseFloat((value || '0').replace('%', '')) || 0;
 
 export default function TestStats() {
     const { testId } = useParams();
     const navigate = useNavigate();
     const [stats, setStats] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [message, setMessage] = useState('');
 
     useEffect(() => {
         const fetchStats = async () => {
             try {
                 const res = await request.get(`/tests/${testId}/statistics`);
                 if (res.success) setStats(res.statistics);
-            } catch (err) {
-                console.error('获取统计失败', err);
+            } catch (error) {
+                setMessage(error.message);
             } finally {
                 setLoading(false);
             }
@@ -23,56 +26,145 @@ export default function TestStats() {
         fetchStats();
     }, [testId]);
 
-    // 处理 CSV 导出 (绕过 request.js 的默认拦截，因为我们需要接收二进制流)
-    const handleExportCSV = async () => {
+    const handleExport = async () => {
         try {
             const token = localStorage.getItem('token');
             const response = await axios({
                 url: `http://localhost:5000/api/tests/${testId}/export`,
                 method: 'GET',
-                responseType: 'blob', // 关键：表明接收二进制数据
-                headers: { 'Authorization': `Bearer ${token}` }
+                responseType: 'blob',
+                headers: { Authorization: `Bearer ${token}` }
             });
 
-            // 触发浏览器下载
             const url = window.URL.createObjectURL(new Blob([response.data]));
             const link = document.createElement('a');
             link.href = url;
-            link.setAttribute('download', `test_results_${testId}.csv`);
+            link.setAttribute('download', `test_results_${testId}.xlsx`);
             document.body.appendChild(link);
             link.click();
             link.remove();
-        } catch (err) {
-            alert('导出失败，请检查网络或后端接口');
+            window.URL.revokeObjectURL(url);
+        } catch (error) {
+            window.alert('Export failed.');
         }
     };
 
-    if (loading) return <div style={{ padding: '50px', textAlign: 'center' }}>数据加载中...</div>;
+    if (loading) {
+        return <main className="app-shell">Loading results...</main>;
+    }
+
+    if (!stats) {
+        return (
+            <main className="app-shell">
+                <button className="btn ghost" onClick={() => navigate('/teacher/dashboard')}>Back</button>
+                <p className="status-text">{message || 'No result data.'}</p>
+            </main>
+        );
+    }
+
+    const counts = stats.overview.checkInCounts;
 
     return (
-        <div style={{ padding: '30px', maxWidth: '800px', margin: '0 auto' }}>
-            <button onClick={() => navigate('/teacher/dashboard')} style={{ marginBottom: '20px' }}>
-                ⬅️ 返回大厅
-            </button>
-            
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h2>📊 测试数据统计盘 (试卷ID: {testId})</h2>
-                <button onClick={handleExportCSV} style={{ background: '#28a745', color: 'white', padding: '10px 15px', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
-                    📥 导出详细 CSV
-                </button>
-            </div>
-
-            {stats ? (
-                <div style={{ background: '#f8f9fa', padding: '20px', borderRadius: '8px', border: '1px solid #ddd', marginTop: '20px' }}>
-                    {/* 这里根据你后端实际返回的 statistics 结构来渲染，这里做个简单示例 */}
-                    <p>你可以直接把后端返回的 JSON 数据结构平铺在这里：</p>
-                    <pre style={{ background: '#eee', padding: '15px', borderRadius: '4px', overflowX: 'auto' }}>
-                        {JSON.stringify(stats, null, 2)}
-                    </pre>
+        <main className="app-shell">
+            <header className="topbar">
+                <div>
+                    <h1>Test Results</h1>
+                    <p className="subtitle">{testId}</p>
                 </div>
-            ) : (
-                <p>暂无统计数据</p>
-            )}
-        </div>
+                <div className="row wrap">
+                    <button className="btn secondary" onClick={() => navigate('/teacher/dashboard')}>Back</button>
+                    <button className="btn" onClick={handleExport}>Export XLSX</button>
+                </div>
+            </header>
+
+            <section className="grid three" style={{ marginBottom: 18 }}>
+                <article className="card">
+                    <h3>Teams</h3>
+                    <strong style={{ fontSize: 32 }}>{stats.overview.totalTeams}</strong>
+                </article>
+                <article className="card">
+                    <h3>Checked In</h3>
+                    <strong style={{ fontSize: 32 }}>{counts.passed}</strong>
+                    <p className="subtitle">{counts.failed} failed · {counts.missing} missing</p>
+                </article>
+                <article className="card">
+                    <h3>Questions</h3>
+                    <strong style={{ fontSize: 32 }}>{stats.test.questionCount}</strong>
+                </article>
+            </section>
+
+            <section className="card stack" style={{ marginBottom: 18 }}>
+                <h2>Question Performance</h2>
+                {stats.questions.map((question) => (
+                    <div className="panel stack" key={question.seq}>
+                        <div className="row wrap">
+                            <strong>Question {question.seq}</strong>
+                            <span className="badge">Answer {question.correctAnswer || 'N/A'}</span>
+                            <span className="muted">{question.totalFinalized} finalized teams</span>
+                        </div>
+                        {['A', 'B', 'C', 'D'].map((key) => (
+                            <div key={key} className="muted">{key}. {question.options[key]}</div>
+                        ))}
+                        {[
+                            ['First try', question.rates.firstTry],
+                            ['Second try', question.rates.secondTry],
+                            ['Third try', question.rates.thirdTry],
+                            ['Incorrect', question.rates.incorrect]
+                        ].map(([label, value]) => (
+                            <div key={label}>
+                                <div className="row">
+                                    <span style={{ width: 100 }}>{label}</span>
+                                    <span className="muted">{value}</span>
+                                </div>
+                                <div className="progress">
+                                    <span style={{ width: `${rateToNumber(value)}%` }} />
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                ))}
+            </section>
+
+            <section className="card stack" style={{ marginBottom: 18 }}>
+                <h2>Team Scores</h2>
+                <table className="table">
+                    <thead>
+                        <tr>
+                            <th>Team</th>
+                            <th>Leader</th>
+                            <th>Members</th>
+                            <th>Score</th>
+                            <th>Answered</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {stats.teamResults.map((team) => (
+                            <tr key={team.teamId}>
+                                <td>{team.teamName}</td>
+                                <td>{team.leader?.name || 'N/A'}</td>
+                                <td>{team.members?.map((member) => member.upi).join(', ')}</td>
+                                <td>{team.totalScore}</td>
+                                <td>{team.answeredQuestions}</td>
+                            </tr>
+                        ))}
+                        {stats.teamResults.length === 0 && (
+                            <tr>
+                                <td colSpan="5" className="muted">No team results yet.</td>
+                            </tr>
+                        )}
+                    </tbody>
+                </table>
+            </section>
+
+            <section className="card stack">
+                <h2>Feedback</h2>
+                {stats.feedbacks.length > 0 ? stats.feedbacks.map((item, index) => (
+                    <div className="panel" key={`${item.upi}-${index}`}>
+                        <strong>{item.studentName} · {item.upi}</strong>
+                        <p>{item.content}</p>
+                    </div>
+                )) : <p className="muted">No feedback submitted.</p>}
+            </section>
+        </main>
     );
 }

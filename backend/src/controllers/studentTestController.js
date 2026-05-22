@@ -2,98 +2,220 @@ import Test from '../models/Test.js';
 import Team from '../models/Team.js';
 import Result from '../models/Result.js';
 import User from '../models/User.js';
+import CheckIn from '../models/CheckIn.js';
 import * as redisService from '../services/redisService.js';
 import { calculateDistance } from '../utils/geo.js';
 
+const CHECK_IN_RADIUS_METERS = 500;
+
+const teamPopulation = [
+    { path: 'members', select: 'name upi' },
+    { path: 'leaderId', select: 'name upi' }
+];
+
+const getActivePublishedTest = () => {
+    return Test.findOne({ status: 'published' }).sort({ createdAt: -1 });
+};
+
+const getOpenFeedbackTest = () => {
+    return Test.findOne({
+        status: 'closed',
+        feedbackOpenUntil: { $gt: new Date() }
+    }).sort({ feedbackOpenUntil: -1 });
+};
+
+const serializeTest = (test) => {
+    if (!test) return null;
+    return {
+        id: test._id,
+        status: test.status,
+        currentSeq: test.currentQuestionSeq,
+        totalQuestions: test.questions?.length || 0,
+        feedbackOpenUntil: test.feedbackOpenUntil || null
+    };
+};
+
+const serializeTeam = (team, studentId) => {
+    if (!team) return null;
+    const doc = typeof team.toObject === 'function' ? team.toObject() : team;
+    const leaderId = doc.leaderId?._id || doc.leaderId;
+    return {
+        ...doc,
+        isLeader: leaderId?.toString() === studentId.toString()
+    };
+};
+
+const addPassedMemberToResult = async (testId, teamId, studentId) => {
+    if (!testId || !teamId || !studentId) return;
+
+    await Result.findOneAndUpdate(
+        { testId, teamId },
+        {
+            $setOnInsert: {
+                answers: [],
+                totalScore: 0
+            },
+            $addToSet: { presentMembers: studentId }
+        },
+        { upsert: true, new: true }
+    );
+};
+
+const getPassedMemberIds = async (testId, memberIds) => {
+    const passed = await CheckIn.find({
+        testId,
+        studentId: { $in: memberIds },
+        status: 'passed'
+    }).select('studentId').lean();
+
+    return passed.map((record) => record.studentId);
+};
+
+export const getLobbyStatus = async (req, res) => {
+    const studentId = req.user.id;
+
+    try {
+        const [student, activeTest, feedbackTest] = await Promise.all([
+            User.findById(studentId).populate({
+                path: 'teamId',
+                match: { isActive: true },
+                populate: teamPopulation
+            }),
+            getActivePublishedTest(),
+            getOpenFeedbackTest()
+        ]);
+
+        if (!student) {
+            return res.status(404).json({ success: false, message: 'Student account not found.' });
+        }
+
+        const checkIn = activeTest
+            ? await CheckIn.findOne({ testId: activeTest._id, studentId }).lean()
+            : null;
+
+        return res.json({
+            success: true,
+            activeTest: serializeTest(activeTest),
+            team: serializeTeam(student.teamId, studentId),
+            checkIn: checkIn
+                ? {
+                    status: checkIn.status,
+                    distanceMeters: checkIn.distanceMeters,
+                    checkedAt: checkIn.checkedAt
+                }
+                : null,
+            feedback: feedbackTest
+                ? {
+                    available: true,
+                    testId: feedbackTest._id,
+                    closesAt: feedbackTest.feedbackOpenUntil
+                }
+                : { available: false },
+            now: new Date()
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
 export const checkLocationAndReady = async (req, res) => {
-    const { teamId, lat, lng } = req.body;
+    const { lat, lng } = req.body;
     const studentId = req.user?.id || req.user?._id;
 
-    if (!studentId) return res.status(401).json({ success: false, message: '无法识别身份，请重新登录' });
+    if (!studentId) {
+        return res.status(401).json({ success: false, message: 'Unable to identify the current student.' });
+    }
+
+    const latitude = Number(lat);
+    const longitude = Number(lng);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        return res.status(400).json({ success: false, message: 'A valid GPS position is required.' });
+    }
 
     try {
         const teacherGps = await redisService.getTeacherGPS();
         if (!teacherGps || !teacherGps.lat) {
-            return res.status(400).json({ success: false, message: '教师尚未设定位置，请稍后' });
+            return res.status(400).json({ success: false, message: 'The teacher has not set the classroom GPS point yet.' });
         }
 
-        const timeDiff = Date.now() - parseInt(teacherGps.timestamp);
+        const timeDiff = Date.now() - parseInt(teacherGps.timestamp, 10);
         if (timeDiff > 900000) {
-            return res.status(400).json({ success: false, message: '教师位置已过期，请让教师刷新位置' });
+            return res.status(400).json({ success: false, message: 'The teacher GPS point has expired. Please ask the teacher to refresh it.' });
         }
 
-        const activeTest = await Test.findOne({ status: { $nin: ['draft', 'closed'] } }).sort({ createdAt: -1 });
-        const isPublished = !!activeTest;
-        const currentTestId = activeTest ? activeTest._id : null;
+        const activeTest = await getActivePublishedTest();
+        const distance = calculateDistance(
+            latitude,
+            longitude,
+            parseFloat(teacherGps.lat),
+            parseFloat(teacherGps.lng)
+        );
 
-        const distance = calculateDistance(lat, lng, parseFloat(teacherGps.lat), parseFloat(teacherGps.lng));
-        
-        // ==========================================
-        // 🚫 失败逻辑：0 次数据库操作！直接打回并提示重试
-        // ==========================================
-        if (distance > 500) {
-            return res.status(400).json({ 
-                success: false, 
-                status: 'gps_failed', 
-                message: `距离过远 (${Math.round(distance)}米)。若在教室内，请等待几秒让 GPS 稳定后再次点击。` 
+        const existingCheckIn = activeTest
+            ? await CheckIn.findOne({ testId: activeTest._id, studentId })
+            : null;
+
+        if (existingCheckIn?.status === 'failed') {
+            return res.json({
+                success: true,
+                status: 'failed',
+                message: 'Check-in already failed for this test. Your score for this test is 0.',
+                distanceMeters: Math.round(existingCheckIn.distanceMeters || distance),
+                testPublished: !!activeTest,
+                testId: activeTest?._id || null
             });
         }
 
-        // ==========================================
-        // ✨ 成功逻辑：写入白名单 (presentMembers)
-        // ==========================================
-        if (currentTestId) {
-            await Result.findOneAndUpdate(
-                { testId: currentTestId, teamId: teamId },
-                { 
-                    $addToSet: { presentMembers: studentId }, // 🚨 成功进场者记录在案
-                    $setOnInsert: { answers: [], totalScore: 0 } 
+        if (distance > CHECK_IN_RADIUS_METERS) {
+            if (activeTest && existingCheckIn?.status !== 'passed') {
+                await CheckIn.findOneAndUpdate(
+                    { testId: activeTest._id, studentId },
+                    {
+                        status: 'failed',
+                        distanceMeters: Math.round(distance),
+                        checkedAt: new Date()
+                    },
+                    { upsert: true, new: true }
+                );
+            }
+
+            return res.json({
+                success: true,
+                status: 'failed',
+                message: `Check-in failed. You are ${Math.round(distance)} meters from the classroom point. Your score for this test is 0.`,
+                distanceMeters: Math.round(distance),
+                testPublished: !!activeTest,
+                testId: activeTest?._id || null
+            });
+        }
+
+        if (activeTest) {
+            await CheckIn.findOneAndUpdate(
+                { testId: activeTest._id, studentId },
+                {
+                    status: 'passed',
+                    distanceMeters: Math.round(distance),
+                    checkedAt: new Date()
                 },
                 { upsert: true, new: true }
             );
-        }
 
-        // ==========================================
-        // 🔒 设备锁抢占与就绪逻辑
-        // ==========================================
-        await redisService.setStudentReady(teamId, studentId);
-
-        const team = await Team.findById(teamId).select('members').lean();
-        if (!team) return res.status(404).json({ success: false, message: '未找到队伍信息' });
-        
-        const memberIds = team.members.map(id => id.toString());
-        const readyMembers = [];
-
-        for (const mId of memberIds) {
-            const isReady = await redisService.checkStudentReady(teamId, mId);
-            if (isReady) readyMembers.push(mId);
-        }
-
-        if (readyMembers.length > 0 && currentTestId) {
-            const existingOperator = await redisService.getActiveDevice(currentTestId, teamId);
-            
-            if (!existingOperator) {
-                const randomIndex = Math.floor(Math.random() * readyMembers.length);
-                const randomStudentId = readyMembers[randomIndex];
-                
-                await redisService.acquireDeviceLock(currentTestId, teamId, randomStudentId);
-                console.log(`🎯 [动态锁分配] 已在 ${readyMembers.length} 名达标组员中，指派 [${randomStudentId}] 获得设备锁`);
+            const student = await User.findById(studentId).select('teamId').lean();
+            if (student?.teamId) {
+                await addPassedMemberToResult(activeTest._id, student.teamId, studentId);
             }
         }
 
-        const io = req.app.get('io');
-        if (io && currentTestId) { 
-            io.to(`team_${teamId}`).emit('TEAM_ALL_READY', { testId: currentTestId });
-        }
-
-        return res.json({ 
-            success: true, 
-            status: 'all_ready', 
-            message: 'GPS校验通过，准许进入测试', 
-            testPublished: isPublished, 
-            testId: currentTestId 
+        return res.json({
+            success: true,
+            status: 'passed',
+            message: activeTest
+                ? 'Check-in successful.'
+                : 'Location verified. Waiting for the teacher to publish a test.',
+            distanceMeters: Math.round(distance),
+            testPublished: !!activeTest,
+            testId: activeTest?._id || null
         });
-
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
@@ -102,41 +224,48 @@ export const checkLocationAndReady = async (req, res) => {
 export const fetchQuestionData = async (req, res) => {
     const { testId, teamId } = { ...req.params, ...req.query };
     const studentId = req.user?.id || req.user?._id;
-    
-    if (!studentId) return res.status(401).json({ success: false, message: '无法识别学生身份，请重新登录' });
+
+    if (!studentId) {
+        return res.status(401).json({ success: false, message: 'Unable to identify the current student.' });
+    }
 
     try {
-        const test = await Test.findById(testId).lean();
-        if (!test || test.status !== 'published') return res.status(403).json({ success: false, message: '测试未发布或已结束' });
+        const [test, team] = await Promise.all([
+            Test.findById(testId).lean(),
+            Team.findById(teamId).populate(teamPopulation)
+        ]);
 
-        const currentQ = test.questions.find(q => q.seq === test.currentQuestionSeq);
-        if (!currentQ) return res.status(404).json({ success: false, message: '未找到当前题目的数据' });
-
-        // 1. 先查 Redis，看看有没有人拿过锁（通常在 checkLocationAndReady 时就已经分配了）
-        let activeStudent = await redisService.getActiveDevice(testId, teamId);
-        
-        // 2. ✨ 防并发兜底逻辑：如果锁丢了，大家一起抢
-        if (!activeStudent) {
-            // 调用 acquireDeviceLock (内部是 SETNX，返回 true 表示我抢到了，false 表示没抢到)
-            const acquired = await redisService.acquireDeviceLock(testId, teamId, studentId);
-            
-            if (acquired) {
-                // 幸运儿：真正抢到了 Redis 锁
-                activeStudent = studentId; 
-            } else {
-                // 慢半拍的人：没抢到，说明就在这几毫秒内，别人抢走了。重新去库里读一下真正的霸主是谁
-                activeStudent = await redisService.getActiveDevice(testId, teamId);
-            }
+        if (!test || test.status !== 'published') {
+            return res.status(403).json({ success: false, message: 'The test is not currently published.' });
         }
 
-        // 3. 严格的字符串比对判定
-        const isOperator = activeStudent && activeStudent.toString() === studentId.toString();
-        
-        return res.json({ 
-            success: true, 
-            isOperator, 
-            currentSeq: test.currentQuestionSeq, 
-            question: { seq: currentQ.seq, options: currentQ.options } 
+        if (!team || !team.isActive) {
+            return res.status(404).json({ success: false, message: 'Your team is no longer active.' });
+        }
+
+        const memberIds = team.members.map((member) => member._id.toString());
+        if (!memberIds.includes(studentId.toString())) {
+            return res.status(403).json({ success: false, message: 'You are not a member of this team.' });
+        }
+
+        const currentQuestion = test.questions.find((question) => question.seq === test.currentQuestionSeq);
+        if (!currentQuestion) {
+            return res.status(404).json({ success: false, message: 'Current question data was not found.' });
+        }
+
+        const leaderId = team.leaderId?._id || team.leaderId;
+        const isOperator = leaderId.toString() === studentId.toString();
+
+        return res.json({
+            success: true,
+            isOperator,
+            currentSeq: test.currentQuestionSeq,
+            totalQuestions: test.questions.length,
+            question: {
+                seq: currentQuestion.seq,
+                options: currentQuestion.options
+            },
+            team: serializeTeam(team, studentId)
         });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -144,53 +273,84 @@ export const fetchQuestionData = async (req, res) => {
 };
 
 export const submitAnswer = async (req, res) => {
-    const { testId, teamId, studentId, seq, selectedOption } = req.body;
+    const { testId, teamId, seq, selectedOption } = req.body;
+    const studentId = req.user?.id || req.user?._id;
+
     try {
-        const activeStudent = await redisService.getActiveDevice(testId, teamId);
-        if (activeStudent !== studentId) {
-            return res.status(403).json({ success: false, message: '您不是当前答题设备' });
-        }
+        const [test, team] = await Promise.all([
+            Test.findById(testId),
+            Team.findById(teamId)
+        ]);
 
-        const test = await Test.findById(testId);
-        
-        // 🚨 漏洞修复：如果测试状态不是进行中(published)，严禁后续任何分数写入！
         if (!test || test.status !== 'published') {
-            return res.status(403).json({ success: false, message: '本次测试已由教师关闭，停止接收答案' });
+            return res.status(403).json({ success: false, message: 'This test is no longer accepting answers.' });
         }
 
-        const questionInfo = test.questions.find(q => q.seq === parseInt(seq));
-        const attempts = await redisService.incrementQuestionAttempts(testId, teamId, seq);
-        let isCorrect = (selectedOption === questionInfo.correctAnswer);
-        let scoreEarned = 0;
-        let isExhausted = false;
+        if (!team || !team.isActive) {
+            return res.status(404).json({ success: false, message: 'Your team is no longer active.' });
+        }
 
-        // ✨ 明确且稳固的计分规则：1次3分，2次2分，3次1分，最后0分
+        const leaderId = team.leaderId.toString();
+        if (leaderId !== studentId.toString()) {
+            return res.status(403).json({ success: false, message: 'Only the team leader device can submit answers.' });
+        }
+
+        if (!['A', 'B', 'C', 'D'].includes(selectedOption)) {
+            return res.status(400).json({ success: false, message: 'Selected option must be A, B, C, or D.' });
+        }
+
+        const questionInfo = test.questions.find((question) => question.seq === parseInt(seq, 10));
+        if (!questionInfo) {
+            return res.status(404).json({ success: false, message: 'Question not found.' });
+        }
+
+        let resultDoc = await Result.findOne({ testId, teamId });
+        if (resultDoc?.answers.some((answer) => answer.questionSeq === parseInt(seq, 10))) {
+            return res.status(409).json({ success: false, message: 'This question has already been finalized for your team.' });
+        }
+
+        const attempts = await redisService.incrementQuestionAttempts(testId, teamId, seq);
+        const isCorrect = selectedOption === questionInfo.correctAnswer;
+        const isExhausted = !isCorrect && attempts >= 3;
+        let scoreEarned = 0;
+
         if (isCorrect) {
-            if (attempts === 1) scoreEarned = 3;
-            else if (attempts === 2) scoreEarned = 2;
-            else if (attempts === 3) scoreEarned = 1;
-        } else if (attempts >= 3) { 
-            isExhausted = true; 
+            if (attempts === 1) scoreEarned = test.scoringRules.firstTry;
+            else if (attempts === 2) scoreEarned = test.scoringRules.secondTry;
+            else if (attempts === 3) scoreEarned = test.scoringRules.thirdTry;
         }
 
         if (isCorrect || isExhausted) {
-            let resultDoc = await Result.findOne({ testId, teamId });
             if (!resultDoc) {
-                resultDoc = new Result({ testId, teamId, activeStudentId: studentId, answers: [] });
+                const presentMembers = await getPassedMemberIds(testId, team.members);
+                resultDoc = new Result({
+                    testId,
+                    teamId,
+                    activeStudentId: studentId,
+                    answers: [],
+                    presentMembers
+                });
             } else if (!resultDoc.activeStudentId) {
                 resultDoc.activeStudentId = studentId;
             }
-            
-            const alreadyAnswered = resultDoc.answers.find(a => a.questionSeq === parseInt(seq));
-            if (!alreadyAnswered) {
-                resultDoc.answers.push({ questionSeq: seq, attempts, isCorrect });
-                resultDoc.totalScore += scoreEarned;
-                await resultDoc.save();
-                await redisService.releaseDeviceLock(testId, teamId);
-            }
+
+            resultDoc.answers.push({
+                questionSeq: parseInt(seq, 10),
+                attempts,
+                isCorrect
+            });
+            resultDoc.totalScore += scoreEarned;
+            await resultDoc.save();
         }
-        
-        res.json({ success: true, isCorrect, isExhausted, scoreEarned, attempts, correctAnswer: isExhausted ? questionInfo.correctAnswer : null });
+
+        res.json({
+            success: true,
+            isCorrect,
+            isExhausted,
+            scoreEarned,
+            attempts,
+            correctAnswer: isExhausted ? questionInfo.correctAnswer : null
+        });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
@@ -198,32 +358,67 @@ export const submitAnswer = async (req, res) => {
 
 export const submitFeedback = async (req, res) => {
     const { testId, feedback } = req.body;
-    const studentId = req.user?.id || req.user?._id; // 从认证中间件中安全提取身份
+    const studentId = req.user?.id || req.user?._id;
 
     if (!studentId || !feedback?.trim()) {
-        return res.status(400).json({ success: false, message: '缺少必要参数或反馈内容为空' });
+        return res.status(400).json({ success: false, message: 'Feedback cannot be empty.' });
     }
 
     try {
-        // ✨ 高性能：直接去 User 表捞取当前提交者的真实姓名和 UPI
+        const test = await Test.findById(testId);
+        if (!test || test.status !== 'closed') {
+            return res.status(403).json({ success: false, message: 'Feedback is available only after a completed test.' });
+        }
+
+        if (!test.feedbackOpenUntil || test.feedbackOpenUntil.getTime() < Date.now()) {
+            return res.status(403).json({ success: false, message: 'The feedback window has closed.' });
+        }
+
+        const team = await Team.findOne({ testId, members: studentId }).sort({ createdAt: -1 });
+        if (!team) {
+            return res.status(404).json({ success: false, message: 'No team record was found for this test.' });
+        }
+
         const studentInfo = await User.findById(studentId).select('name upi').lean();
-        
-        // 📢 实时 Socket 广播给教师端
+        const cleanFeedback = feedback.trim();
+
+        await Result.updateOne(
+            { testId, teamId: team._id },
+            { $pull: { feedback: { studentId } } }
+        );
+
+        await Result.findOneAndUpdate(
+            { testId, teamId: team._id },
+            {
+                $setOnInsert: {
+                    activeStudentId: team.leaderId,
+                    answers: [],
+                    totalScore: 0
+                },
+                $push: {
+                    feedback: {
+                        studentId,
+                        content: cleanFeedback,
+                        submittedAt: new Date()
+                    }
+                }
+            },
+            { upsert: true, new: true }
+        );
+
         const io = req.app.get('io');
         if (io) {
-            // 向全局或专门的测试房间推送
-            io.emit('NEW_FEEDBACK_RECEIVED', {
+            io.to('teacher_room').emit('NEW_FEEDBACK_RECEIVED', {
                 testId,
                 studentId,
-                name: studentInfo?.name || '未知学生',
+                name: studentInfo?.name || 'Unknown student',
                 upi: studentInfo?.upi || 'N/A',
-                content: feedback,
+                content: cleanFeedback,
                 timestamp: new Date()
             });
         }
 
-        // 仅响应成功，不包含任何让前端跳转的指令
-        res.json({ success: true, message: '反馈提交成功' });
+        res.json({ success: true, message: 'Feedback submitted successfully.' });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }

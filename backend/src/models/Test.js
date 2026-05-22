@@ -8,12 +8,12 @@ const questionSchema = new mongoose.Schema({
         C: { type: String, required: true },
         D: { type: String, required: true }
     },
-    correctAnswer: { 
-        type: String, 
+    correctAnswer: {
+        type: String,
         enum: ['A', 'B', 'C', 'D'],
-        default: null // 导入时可能没有，由教师后续配置
+        default: null
     }
-}, { _id: false }); // 子文档不需要独立的 _id
+}, { _id: false });
 
 const testSchema = new mongoose.Schema({
     status: {
@@ -30,7 +30,13 @@ const testSchema = new mongoose.Schema({
     currentQuestionSeq: {
         type: Number,
         default: 1
+    },
+    feedbackOpenUntil: {
+        type: Date,
+        default: null
     }
 }, { timestamps: true });
+
+testSchema.index({ status: 1, createdAt: -1 });
 
 export default mongoose.model('Test', testSchema);

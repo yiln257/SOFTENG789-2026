@@ -1,55 +1,125 @@
 import xlsx from 'xlsx';
+import User from '../models/User.js';
 import Team from '../models/Team.js';
 import Test from '../models/Test.js';
 import Result from '../models/Result.js';
+import CheckIn from '../models/CheckIn.js';
+
+const percent = (value, total) => {
+    if (!total) return '0.00%';
+    return `${((value / total) * 100).toFixed(2)}%`;
+};
 
 export const getTestStatistics = async (req, res) => {
     const { testId } = req.params;
+
     try {
-        const test = await Test.findById(testId);
-        if (!test) return res.status(404).json({ success: false, message: '未找到试卷' });
+        const test = await Test.findById(testId).lean();
+        if (!test) {
+            return res.status(404).json({ success: false, message: 'Test not found.' });
+        }
 
-        const results = await Result.find({ testId }).populate('feedback.studentId', 'name upi').lean();
-        const stats = {};
-        test.questions.forEach(q => {
-            stats[q.seq] = { firstTry: 0, secondTry: 0, thirdTry: 0, error: 0, totalAttempts: 0, feedbacks: [] };
-        });
+        const [results, teams, checkIns, totalStudents] = await Promise.all([
+            Result.find({ testId })
+                .populate('activeStudentId', 'name upi')
+                .populate('feedback.studentId', 'name upi')
+                .lean(),
+            Team.find({ testId }).populate('members', 'name upi').populate('leaderId', 'name upi').lean(),
+            CheckIn.find({ testId }).populate('studentId', 'name upi').lean(),
+            User.countDocuments({ role: 'student' })
+        ]);
 
-        results.forEach(result => {
-            result.answers.forEach(ans => {
-                const seq = ans.questionSeq;
-                if (stats[seq]) {
-                    stats[seq].totalAttempts += 1;
-                    if (ans.isCorrect) {
-                        if (ans.attempts === 1) stats[seq].firstTry += 1;
-                        else if (ans.attempts === 2) stats[seq].secondTry += 1;
-                        else if (ans.attempts === 3) stats[seq].thirdTry += 1;
-                    } else { stats[seq].error += 1; }
+        const teamMap = new Map(teams.map((team) => [team._id.toString(), team]));
+        const questionStats = test.questions.map((question) => ({
+            seq: question.seq,
+            options: question.options,
+            correctAnswer: question.correctAnswer,
+            firstTry: 0,
+            secondTry: 0,
+            thirdTry: 0,
+            incorrect: 0,
+            totalFinalized: 0,
+            rates: {
+                firstTry: '0.00%',
+                secondTry: '0.00%',
+                thirdTry: '0.00%',
+                incorrect: '0.00%'
+            }
+        }));
+        const questionMap = new Map(questionStats.map((question) => [question.seq, question]));
+
+        const feedbacks = [];
+        const teamResults = results.map((result) => {
+            result.answers.forEach((answer) => {
+                const question = questionMap.get(answer.questionSeq);
+                if (!question) return;
+
+                question.totalFinalized += 1;
+                if (answer.isCorrect) {
+                    if (answer.attempts === 1) question.firstTry += 1;
+                    else if (answer.attempts === 2) question.secondTry += 1;
+                    else if (answer.attempts === 3) question.thirdTry += 1;
+                } else {
+                    question.incorrect += 1;
                 }
             });
 
-            if (result.feedback && result.feedback.length > 0) {
-                result.feedback.forEach(fb => {
-                    if (stats[fb.questionSeq]) {
-                        stats[fb.questionSeq].feedbacks.push({
-                            studentName: fb.studentId?.name || '未知', upi: fb.studentId?.upi || '未知', content: fb.content
-                        });
-                    }
+            result.feedback?.forEach((item) => {
+                feedbacks.push({
+                    studentName: item.studentId?.name || 'Unknown student',
+                    upi: item.studentId?.upi || 'N/A',
+                    content: item.content,
+                    submittedAt: item.submittedAt
                 });
-            }
-        });
+            });
 
-        Object.keys(stats).forEach(seq => {
-            const qStat = stats[seq];
-            const total = qStat.totalAttempts || 1;
-            qStat.rates = {
-                firstTry: ((qStat.firstTry / total) * 100).toFixed(2) + '%',
-                secondTry: ((qStat.secondTry / total) * 100).toFixed(2) + '%',
-                thirdTry: ((qStat.thirdTry / total) * 100).toFixed(2) + '%',
-                error: ((qStat.error / total) * 100).toFixed(2) + '%'
+            const team = teamMap.get(result.teamId.toString());
+            return {
+                teamId: result.teamId,
+                teamName: team?.teamName || 'Unknown team',
+                leader: team?.leaderId || null,
+                members: team?.members || [],
+                totalScore: result.totalScore || 0,
+                answeredQuestions: result.answers.length,
+                presentCount: result.presentMembers?.length || 0
             };
         });
-        res.json({ success: true, statistics: stats });
+
+        questionStats.forEach((question) => {
+            question.rates = {
+                firstTry: percent(question.firstTry, question.totalFinalized),
+                secondTry: percent(question.secondTry, question.totalFinalized),
+                thirdTry: percent(question.thirdTry, question.totalFinalized),
+                incorrect: percent(question.incorrect, question.totalFinalized)
+            };
+        });
+
+        const checkInCounts = checkIns.reduce((acc, item) => {
+            acc[item.status] = (acc[item.status] || 0) + 1;
+            return acc;
+        }, { passed: 0, failed: 0 });
+        checkInCounts.missing = Math.max(totalStudents - checkInCounts.passed - checkInCounts.failed, 0);
+
+        res.json({
+            success: true,
+            statistics: {
+                test: {
+                    id: test._id,
+                    status: test.status,
+                    questionCount: test.questions.length,
+                    currentQuestionSeq: test.currentQuestionSeq,
+                    feedbackOpenUntil: test.feedbackOpenUntil
+                },
+                overview: {
+                    totalTeams: teams.length,
+                    totalStudents,
+                    checkInCounts
+                },
+                questions: questionStats,
+                teamResults,
+                feedbacks
+            }
+        });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
@@ -57,58 +127,56 @@ export const getTestStatistics = async (req, res) => {
 
 export const exportTestResults = async (req, res) => {
     const { testId } = req.params;
+
     try {
-        // 1. 获取所有队伍及组内所有成员的信息（这是全班大名单）
-        const teams = await Team.find().populate('members', 'name upi').lean();
-        
-        // 2. 获取本次测试产生的所有结果文档
-        const results = await Result.find({ testId }).lean();
-        
-        // 3. 将结果转化为字典 (Map) 以便快速查找。Key 为 teamId
-        const resultMap = {};
-        results.forEach(r => {
-            resultMap[r.teamId.toString()] = {
-                totalScore: r.totalScore || 0,
-                // 把白名单内的学生 ID 转为字符串数组，方便后面做比对
-                presentMembers: (r.presentMembers || []).map(id => id.toString()) 
-            };
-        });
+        const test = await Test.findById(testId).lean();
+        if (!test) {
+            return res.status(404).json({ success: false, message: 'Test not found.' });
+        }
 
-        // 4. 构建要导出到 Excel 的数据数组
-        const exportData = [];
-        
-        teams.forEach(team => {
-            // 拿到这个队伍的成绩和白名单
-            const teamResult = resultMap[team._id.toString()];
-            const teamScore = teamResult ? teamResult.totalScore : 0;
-            const presentIds = teamResult ? teamResult.presentMembers : [];
+        const [students, teams, results, checkIns] = await Promise.all([
+            User.find({ role: 'student' }).select('name upi').sort({ upi: 1 }).lean(),
+            Team.find({ testId }).populate('members', 'name upi').lean(),
+            Result.find({ testId }).lean(),
+            CheckIn.find({ testId }).lean()
+        ]);
 
-            // 遍历组内每一个学生
-            team.members.forEach(student => {
-                // 💡 核心计分逻辑：如果该学生在白名单内，拿小组得分；不在白名单（没来或失败），得 0 分
-                const studentScore = presentIds.includes(student._id.toString()) ? teamScore : 0;
-                
-                exportData.push({
-                    '学生姓名': student.name,
-                    'UPI': student.upi,
-                    '组名': team.teamName,
-                    '个人成绩': studentScore
-                });
+        const resultByTeam = new Map(results.map((result) => [result.teamId.toString(), result]));
+        const checkInByStudent = new Map(checkIns.map((item) => [item.studentId.toString(), item]));
+        const teamByStudent = new Map();
+
+        teams.forEach((team) => {
+            team.members.forEach((student) => {
+                teamByStudent.set(student._id.toString(), team);
             });
         });
 
-        // 5. 使用 xlsx 库将 JSON 数组转成 Excel (XLSX) 文件流
+        const exportData = students.map((student) => {
+            const studentId = student._id.toString();
+            const team = teamByStudent.get(studentId);
+            const result = team ? resultByTeam.get(team._id.toString()) : null;
+            const checkIn = checkInByStudent.get(studentId);
+            const checkInStatus = checkIn?.status || 'missing';
+            const score = checkInStatus === 'passed' && result ? result.totalScore || 0 : 0;
+
+            return {
+                Name: student.name,
+                UPI: student.upi,
+                Team: team?.teamName || 'No team',
+                'Check-in': checkInStatus,
+                Score: score
+            };
+        });
+
         const worksheet = xlsx.utils.json_to_sheet(exportData);
         const workbook = xlsx.utils.book_new();
-        xlsx.utils.book_append_sheet(workbook, worksheet, "学生成绩表");
-        
+        xlsx.utils.book_append_sheet(workbook, worksheet, 'Student Results');
+
         const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
 
-        // 6. 返回真正的 xlsx 附件给前端下载
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.setHeader('Content-Disposition', `attachment; filename="test_results_${testId}.xlsx"`);
         res.status(200).send(buffer);
-
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }

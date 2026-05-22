@@ -7,7 +7,7 @@ export const useGeoLocation = () => {
     const getPosition = () => {
         return new Promise((resolve, reject) => {
             if (!navigator.geolocation) {
-                const err = new Error('您的浏览器不支持或已禁用地理位置服务');
+                const err = new Error('This browser does not support geolocation.');
                 setGeoError(err.message);
                 reject(err);
                 return;
@@ -26,12 +26,12 @@ export const useGeoLocation = () => {
                 },
                 (err) => {
                     setIsLocating(false);
-                    let errMsg = '获取定位失败';
-                    if (err.code === 1) errMsg = '定位权限被拒绝，请在浏览器设置中允许';
-                    if (err.code === 2) errMsg = '无法获取当前位置（信号弱）';
-                    if (err.code === 3) errMsg = '获取位置超时';
-                    setGeoError(errMsg);
-                    reject(new Error(errMsg));
+                    let message = 'Unable to get your current location.';
+                    if (err.code === 1) message = 'Location permission was denied.';
+                    if (err.code === 2) message = 'The current position is unavailable.';
+                    if (err.code === 3) message = 'Getting your location timed out.';
+                    setGeoError(message);
+                    reject(new Error(message));
                 },
                 { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
             );

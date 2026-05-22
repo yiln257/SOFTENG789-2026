@@ -9,15 +9,18 @@ const userSchema = new mongoose.Schema({
     upi: {
         type: String,
         unique: true,
-        sparse: true // 允许教师没有 UPI 但保持学生 UPI 唯一
+        sparse: true,
+        trim: true
     },
     name: {
         type: String,
-        required: true
+        required: true,
+        trim: true
     },
     email: {
         type: String,
-        required: true
+        required: true,
+        trim: true
     },
     password: {
         type: String,
@@ -31,5 +34,6 @@ const userSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 userSchema.index({ teamId: 1 });
+userSchema.index({ role: 1, upi: 1 });
 
 export default mongoose.model('User', userSchema);

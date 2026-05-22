@@ -1,87 +1,83 @@
 import User from '../models/User.js';
-import Team from '../models/Team.js';
 import xlsx from 'xlsx';
 import crypto from 'crypto';
 
-const generateRandomPassword = () => crypto.randomBytes(20).toString('alphanumeric').slice(0, 6);
+const normalizeUPI = (upi) => upi?.toString().trim().toLowerCase();
+const generatePassword = () => crypto.randomBytes(6).toString('base64url').slice(0, 8);
 
 export const importStudents = async (req, res) => {
     try {
-        if (!req.file) return res.status(400).json({ success: false, message: '请上传 Excel 或 CSV 文件' });
+        if (!req.file) {
+            return res.status(400).json({ success: false, message: 'Please upload an Excel or CSV file.' });
+        }
+
         const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
         const sheetName = workbook.SheetNames[0];
         const studentsData = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
 
-        if (studentsData.length === 0) return res.status(400).json({ success: false, message: '表格为空或解析失败' });
+        if (studentsData.length === 0) {
+            return res.status(400).json({ success: false, message: 'The uploaded roster is empty.' });
+        }
 
-        let newCount = 0;
+        let createdCount = 0;
+        let updatedCount = 0;
+
         for (const row of studentsData) {
-            const upi = row['UPI'] || row['upi'];
-            const name = row['Name'] || row['name'];
+            const upi = normalizeUPI(row.UPI || row.upi);
+            const name = row.Name || row.name;
+            const password = row.Password || row.password || 'password123';
+
             if (!upi || !name) continue;
 
-            const existingUser = await User.findOne({ upi: upi.toString() });
+            const existingUser = await User.findOne({ upi });
             if (!existingUser) {
                 await User.create({
-                    role: 'student', upi: upi.toString(), name: name.toString(),
-                    email: `${upi}@aucklanduni.ac.nz`, password: 'password123'
+                    role: 'student',
+                    upi,
+                    name: name.toString().trim(),
+                    email: `${upi}@aucklanduni.ac.nz`,
+                    password: row.Password || row.password ? password.toString() : generatePassword()
                 });
-                newCount++;
+                createdCount += 1;
+            } else {
+                existingUser.name = name.toString().trim();
+                existingUser.email = existingUser.email || `${upi}@aucklanduni.ac.nz`;
+                if (row.Password || row.password) {
+                    existingUser.password = password.toString();
+                }
+                await existingUser.save();
+                updatedCount += 1;
             }
         }
-        res.status(200).json({ success: true, message: `成功导入/更新数据，新创建 ${newCount} 名学生` });
+
+        res.status(200).json({
+            success: true,
+            message: `Roster import complete. Created ${createdCount} students and updated ${updatedCount}.`
+        });
     } catch (error) {
-        res.status(500).json({ success: false, message: '文件解析失败: ' + error.message });
+        res.status(500).json({ success: false, message: `File parsing failed: ${error.message}` });
     }
 };
 
-export const randomGroup = async (req, res) => {
+export const printStudentPasswords = async (req, res) => {
     try {
-        await Team.deleteMany({});
-        await User.updateMany({ role: 'student' }, { teamId: null });
+        const students = await User.find({ role: 'student' })
+            .select('name upi email password')
+            .sort({ upi: 1 })
+            .lean();
 
-        const students = await User.find({ role: 'student' });
-        const shuffled = [...students].sort(() => Math.random() - 0.5);
-        if (shuffled.length < 4) return res.status(400).json({ success: false, message: '学生人数不足以分组' });
+        console.log('========== Student login passwords ==========');
+        students.forEach((student) => {
+            console.log(`To: ${student.email} | Name: ${student.name} | UPI: ${student.upi} | Password: ${student.password}`);
+        });
+        console.log('============================================');
 
-        const teamGroups = [];
-        for (let i = 0; i < shuffled.length; i += 4) { teamGroups.push(shuffled.slice(i, i + 4)); }
-
-        const lastGroup = teamGroups[teamGroups.length - 1];
-        if (lastGroup.length < 4 && teamGroups.length > 1) {
-            const remainders = teamGroups.pop();
-            remainders.forEach((student, index) => { teamGroups[index].push(student); });
-        }
-
-        for (let i = 0; i < teamGroups.length; i++) {
-            const memberIds = teamGroups[i].map(s => s._id);
-            const team = await Team.create({ teamName: `Team ${i + 1}`, members: memberIds });
-            await User.updateMany({ _id: { $in: memberIds } }, { teamId: team._id });
-        }
-
-        const result = await Team.find().populate('members', 'name upi');
-        res.json({ success: true, message: '分组成功', teams: result });
+        res.json({
+            success: true,
+            message: `Printed ${students.length} student passwords to the backend console.`,
+            count: students.length
+        });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
 };
-
-export const sendGroupingEmails = async (req, res) => {
-    try {
-        const teams = await Team.find().populate('members');
-        dispatchEmailsSequentially(teams); 
-        res.json({ success: true, message: '邮件队列已启动，预计 1 小时内发送完毕' });
-    } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
-    }
-};
-
-async function dispatchEmailsSequentially(teams) {
-    const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-    for (const team of teams) {
-        for (const student of team.members) {
-            console.log(`[发送至 ${student.email}] 姓名: ${student.name}, 组别: ${team.teamName}, UPI: ${student.upi}`);
-            await delay(3600);
-        }
-    }
-}

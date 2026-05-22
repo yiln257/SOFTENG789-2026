@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useSocket } from '../../hooks/useSocket';
 import { useAuth } from '../../context/AuthContext';
@@ -10,42 +10,65 @@ export default function StudentLiveTest() {
     const socket = useSocket();
     const { user } = useAuth();
 
-    const [isOperator, setIsOperator] = useState(false); 
-    const [currentSeq, setCurrentSeq] = useState(1); 
-    const [attempts, setAttempts] = useState(0); 
-    const [optionStates, setOptionStates] = useState({}); 
-    const [isLocked, setIsLocked] = useState(false); 
+    const [team, setTeam] = useState(user?.team || null);
+    const [isOperator, setIsOperator] = useState(false);
+    const [currentSeq, setCurrentSeq] = useState(1);
+    const [totalQuestions, setTotalQuestions] = useState(1);
+    const [question, setQuestion] = useState(null);
+    const [attempts, setAttempts] = useState(0);
+    const [optionStates, setOptionStates] = useState({});
+    const [isLocked, setIsLocked] = useState(false);
+    const [message, setMessage] = useState('');
+    const [loading, setLoading] = useState(true);
 
-    const teamId = user?.team?._id || user?.teamId || user?.team; 
-    const studentId = user?.id || user?._id;
+    const teamId = team?._id || user?.teamId;
+    const progress = Math.min((currentSeq / Math.max(totalQuestions, 1)) * 100, 100);
 
-    // --- 核心动作 1：获取本题状态与抢锁 ---
+    const fetchTeam = async () => {
+        if (teamId) return teamId;
+        const res = await request.get('/student/team-info');
+        if (res.success && res.team) {
+            setTeam(res.team);
+            return res.team._id;
+        }
+        return null;
+    };
+
     const fetchQuestionAndLock = async () => {
-        if (!testId || !teamId || !studentId) return;
+        setLoading(true);
+        setMessage('');
+
         try {
-            const res = await request.get(`/student/question?testId=${testId}&teamId=${teamId}&studentId=${studentId}`);
-            
+            const currentTeamId = teamId || await fetchTeam();
+            if (!currentTeamId) {
+                setMessage('Please finish teaming before entering the test.');
+                return;
+            }
+
+            const res = await request.get(`/student/question?testId=${testId}&teamId=${currentTeamId}`);
             if (res.success) {
                 setIsOperator(res.isOperator);
                 setCurrentSeq(res.currentSeq);
-                // 每次获取新题时，清空之前的选项状态
+                setTotalQuestions(res.totalQuestions);
+                setQuestion(res.question);
+                setTeam(res.team);
                 setOptionStates({});
                 setAttempts(0);
                 setIsLocked(false);
             }
-        } catch (err) {
-            console.error('获取题目失败', err);
+        } catch (error) {
+            setMessage(error.message);
+        } finally {
+            setLoading(false);
         }
     };
 
-    // 初始化时获取一次题目
     useEffect(() => {
         fetchQuestionAndLock();
-    }, [testId, teamId, studentId]);
+    }, [testId, teamId]);
 
-    // --- 核心动作 2：监听老师切换题目的 Socket 广播 ---
     useEffect(() => {
-        if (!socket) return;
+        if (!socket) return undefined;
 
         const handleChangeQuestion = (data) => {
             if (data.testId === testId) {
@@ -53,32 +76,22 @@ export default function StudentLiveTest() {
             }
         };
 
-        const handleEnterFeedback = (data) => {
-            if (data.testId === testId) {
-                navigate(`/student/feedback/${testId}`);
-            }
-        };
-
-        // 🚨 新增：如果学生还在答题页面挂机，老师强制结束测试时，直接踢回大厅
         const handleTestEnded = (data) => {
             if (data.testId === testId) {
-                alert('教师已强行结束本次测试，系统将带您返回大厅。');
-                navigate('/student/dashboard');
+                setMessage('The test has ended. Returning to the lobby...');
+                setTimeout(() => navigate('/student/dashboard'), 800);
             }
         };
 
         socket.on('CHANGE_QUESTION', handleChangeQuestion);
-        socket.on('ENTER_FEEDBACK', handleEnterFeedback);
         socket.on('TEST_ENDED', handleTestEnded);
 
         return () => {
             socket.off('CHANGE_QUESTION', handleChangeQuestion);
-            socket.off('ENTER_FEEDBACK', handleEnterFeedback);
             socket.off('TEST_ENDED', handleTestEnded);
         };
-    }, [socket, testId, navigate]);
+    }, [socket, testId, navigate, teamId]);
 
-    // --- 核心动作 3：提交选项（刮刮乐机制） ---
     const handleOptionSelect = async (selectedOption) => {
         if (!isOperator || isLocked || optionStates[selectedOption] === 'wrong') return;
 
@@ -86,84 +99,95 @@ export default function StudentLiveTest() {
             const res = await request.post('/student/answer', {
                 testId,
                 teamId,
-                studentId,
                 seq: currentSeq,
                 selectedOption
             });
 
             if (res.success) {
                 setAttempts(res.attempts);
-                
+
                 if (res.isCorrect) {
-                    // 答对：将该选项标绿，并锁定本题
-                    setOptionStates(prev => ({ ...prev, [selectedOption]: 'correct' }));
+                    setOptionStates((prev) => ({ ...prev, [selectedOption]: 'correct' }));
                     setIsLocked(true);
+                    setMessage(`Correct. Score earned: ${res.scoreEarned}.`);
+                } else if (res.isExhausted && res.correctAnswer) {
+                    setIsLocked(true);
+                    setOptionStates((prev) => ({
+                        ...prev,
+                        [selectedOption]: 'wrong',
+                        [res.correctAnswer]: 'correct'
+                    }));
+                    setMessage(`No attempts left. Correct answer: ${res.correctAnswer}.`);
                 } else {
-                    // 答错：将该选项置灰
-                    setOptionStates(prev => ({ ...prev, [selectedOption]: 'wrong' }));
-                    
-                    // 如果错误次数达到3次（机会耗尽），则锁定题目，并标出正确答案
-                    if (res.isExhausted && res.correctAnswer) {
-                        setIsLocked(true);
-                        setOptionStates(prev => ({ ...prev, [res.correctAnswer]: 'correct' }));
-                    }
+                    setOptionStates((prev) => ({ ...prev, [selectedOption]: 'wrong' }));
+                    setMessage(`Incorrect. Attempts used: ${res.attempts}.`);
                 }
             }
-        } catch (err) {
-            console.error('提交答案失败', err);
-            alert(err.response?.data?.message || '提交失败');
+        } catch (error) {
+            setMessage(error.message);
         }
     };
 
-    // 渲染 ABCD 四个选项按钮
-    const renderOption = (optStr) => {
-        let bgColor = '#f8f9fa';
-        let color = '#333';
+    const options = useMemo(() => question?.options || {}, [question]);
 
-        if (optionStates[optStr] === 'correct') {
-            bgColor = '#28a745'; // 绿色（对）
-            color = 'white';
-        } else if (optionStates[optStr] === 'wrong') {
-            bgColor = '#e9ecef'; // 置灰（错）
-            color = '#adb5bd';
-        }
+    const renderOption = ([key, value]) => {
+        const state = optionStates[key];
+        const className = [
+            'btn',
+            'option-btn',
+            state === 'correct' ? 'correct' : '',
+            state === 'wrong' ? 'wrong' : ''
+        ].filter(Boolean).join(' ');
 
         return (
             <button
-                key={optStr}
-                onClick={() => handleOptionSelect(optStr)}
-                disabled={!isOperator || isLocked || optionStates[optStr] === 'wrong'}
-                style={{
-                    padding: '20px', fontSize: '24px', margin: '10px',
-                    width: '40%', borderRadius: '8px', border: '2px solid #007bff',
-                    background: bgColor, color: color,
-                    cursor: (!isOperator || isLocked || optionStates[optStr] === 'wrong') ? 'not-allowed' : 'pointer',
-                    opacity: optionStates[optStr] === 'wrong' ? 0.5 : 1
-                }}
+                key={key}
+                className={className}
+                onClick={() => handleOptionSelect(key)}
+                disabled={!isOperator || isLocked || state === 'wrong'}
             >
-                {optStr}
+                <span className="option-letter">{key}</span>
+                <span>{value}</span>
             </button>
         );
     };
 
+    if (loading) {
+        return <main className="app-shell">Loading test...</main>;
+    }
+
     return (
-        <div style={{ padding: '20px', maxWidth: '800px', margin: '0 auto', textAlign: 'center' }}>
-            <h2>📝 第 {currentSeq} 题</h2>
-            
-            {/* ✨ 优化了非操作手（观看者）的提示文案 */}
-            {!isOperator ? (
-                <div style={{ padding: '50px', background: '#ffeeba', color: '#856404', borderRadius: '8px', fontSize: '20px', lineHeight: '1.5' }}>
-                    📱 组内其他成员已最先通过 GPS 校验获得了答题设备。<br/><br/>
-                    请与他共享屏幕看题，并一起讨论答案！
+        <main className="app-shell narrow">
+            <header className="topbar">
+                <div>
+                    <h1>Question {currentSeq}</h1>
+                    <p className="subtitle">Question {currentSeq} of {totalQuestions}</p>
                 </div>
-            ) : (
-                <div style={{ marginTop: '30px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap' }}>
-                        {['A', 'B', 'C', 'D'].map(renderOption)}
+                <span className={isOperator ? 'badge success' : 'badge'}>{isOperator ? 'Leader Device' : 'Member Device'}</span>
+            </header>
+
+            <div className="card stack">
+                <div className="progress" aria-label="Question progress">
+                    <span style={{ width: `${progress}%` }} />
+                </div>
+
+                {!isOperator ? (
+                    <div className="panel">
+                        <h2>Test Started</h2>
+                        <p className="muted">Please share the team leader device to answer.</p>
                     </div>
-                    {isLocked && <p style={{ color: 'green', marginTop: '20px', fontWeight: 'bold' }}>本题已作答完毕，请看屏幕等待老师切换下一题</p>}
-                </div>
-            )}
-        </div>
+                ) : (
+                    <div className="stack">
+                        <div className="option-grid">
+                            {Object.entries(options).map(renderOption)}
+                        </div>
+                        <p className="muted">Attempts used: {attempts}</p>
+                    </div>
+                )}
+
+                {isLocked && <div className="success">This question is finalized. Wait for the next question.</div>}
+                {message && <div className={message.startsWith('Correct') ? 'success' : 'status-text'}>{message}</div>}
+            </div>
+        </main>
     );
 }
