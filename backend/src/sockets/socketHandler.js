@@ -5,7 +5,7 @@ export const setupSocket = (io) => {
         // 学生登录后，前端需要主动发送 join_team 事件加入房间
         socket.on('join_team', ({ teamId, studentId }) => {
             if (teamId) {
-                socket.join(`team_${teamId}`);
+                socket.join(teamId);
                 console.log(`Student ${studentId} joined room: team_${teamId}`);
             }
         });

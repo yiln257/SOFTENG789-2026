@@ -7,12 +7,14 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
-      - "3000:3000"
+      - "5173:5173"  # <--- 改为 5173
     volumes:
       - ./frontend:/app
-      - /app/node_modules # 防止本地的 node_modules 覆盖容器内的
+      - /app/node_modules
     environment:
-      - WATCHPACK_POLLING=true # 解决 WSL2 下热更新失效的问题
+      - CHOKIDAR_USEPOLLING=true # <--- 改为 Vite 适用的热更新变量
+    depends_on:
+      - backend
 
   # 2. 后端服务
   backend:

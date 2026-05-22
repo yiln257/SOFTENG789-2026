@@ -15,10 +15,14 @@ const feedbackSchema = new mongoose.Schema({
 const resultSchema = new mongoose.Schema({
     testId: { type: mongoose.Schema.Types.ObjectId, ref: 'Test', required: true },
     teamId: { type: mongoose.Schema.Types.ObjectId, ref: 'Team', required: true },
-    activeStudentId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    activeStudentId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, 
     totalScore: { type: Number, default: 0 },
     answers: [answerSchema],
-    feedback: [feedbackSchema]
+    feedback: [feedbackSchema],
+
+    // 💡 核心改变：改用白名单！只记录成功校验 GPS 且在场的人
+    presentMembers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }]
+    
 }, { timestamps: true });
 
 resultSchema.index({ testId: 1, teamId: 1 });
