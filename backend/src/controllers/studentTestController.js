@@ -7,6 +7,7 @@ import * as redisService from '../services/redisService.js';
 import { calculateDistance } from '../utils/geo.js';
 
 const CHECK_IN_RADIUS_METERS = 500;
+const PRE_TEST_CHECK_IN_TTL_MS = 15 * 60 * 1000;
 
 const teamPopulation = [
     { path: 'members', select: 'name upi' },
@@ -91,7 +92,22 @@ export const getLobbyStatus = async (req, res) => {
 
         const checkIn = activeTest
             ? await CheckIn.findOne({ testId: activeTest._id, studentId }).lean()
-            : null;
+            : await CheckIn.findOne({
+                testId: null,
+                studentId,
+                checkedAt: { $gt: new Date(Date.now() - PRE_TEST_CHECK_IN_TTL_MS) }
+            }).lean();
+
+        const effectiveFeedbackTest = activeTest ? null : feedbackTest;
+        let feedbackSubmitted = false;
+
+        if (effectiveFeedbackTest) {
+            const submittedFeedback = await Result.exists({
+                testId: effectiveFeedbackTest._id,
+                'feedback.studentId': studentId
+            });
+            feedbackSubmitted = !!submittedFeedback;
+        }
 
         return res.json({
             success: true,
@@ -104,13 +120,14 @@ export const getLobbyStatus = async (req, res) => {
                     checkedAt: checkIn.checkedAt
                 }
                 : null,
-            feedback: feedbackTest
+            feedback: effectiveFeedbackTest
                 ? {
                     available: true,
-                    testId: feedbackTest._id,
-                    closesAt: feedbackTest.feedbackOpenUntil
+                    testId: effectiveFeedbackTest._id,
+                    closesAt: effectiveFeedbackTest.feedbackOpenUntil,
+                    submitted: feedbackSubmitted
                 }
-                : { available: false },
+                : { available: false, submitted: false },
             now: new Date()
         });
     } catch (error) {
@@ -177,6 +194,16 @@ export const checkLocationAndReady = async (req, res) => {
                     },
                     { upsert: true, new: true }
                 );
+            } else if (!activeTest) {
+                await CheckIn.findOneAndUpdate(
+                    { testId: null, studentId },
+                    {
+                        status: 'failed',
+                        distanceMeters: Math.round(distance),
+                        checkedAt: new Date()
+                    },
+                    { upsert: true, new: true }
+                );
             }
 
             return res.json({
@@ -189,14 +216,16 @@ export const checkLocationAndReady = async (req, res) => {
             });
         }
 
+        const passedCheckIn = {
+            status: 'passed',
+            distanceMeters: Math.round(distance),
+            checkedAt: new Date()
+        };
+
         if (activeTest) {
             await CheckIn.findOneAndUpdate(
                 { testId: activeTest._id, studentId },
-                {
-                    status: 'passed',
-                    distanceMeters: Math.round(distance),
-                    checkedAt: new Date()
-                },
+                passedCheckIn,
                 { upsert: true, new: true }
             );
 
@@ -204,14 +233,18 @@ export const checkLocationAndReady = async (req, res) => {
             if (student?.teamId) {
                 await addPassedMemberToResult(activeTest._id, student.teamId, studentId);
             }
+        } else {
+            await CheckIn.findOneAndUpdate(
+                { testId: null, studentId },
+                passedCheckIn,
+                { upsert: true, new: true }
+            );
         }
 
         return res.json({
             success: true,
             status: 'passed',
-            message: activeTest
-                ? 'Check-in successful.'
-                : 'Location verified. Waiting for the teacher to publish a test.',
+            message: 'Check-in successful.',
             distanceMeters: Math.round(distance),
             testPublished: !!activeTest,
             testId: activeTest?._id || null
@@ -374,6 +407,19 @@ export const submitFeedback = async (req, res) => {
             return res.status(403).json({ success: false, message: 'The feedback window has closed.' });
         }
 
+        const activeTest = await getActivePublishedTest();
+        if (activeTest) {
+            return res.status(403).json({ success: false, message: 'Feedback is closed because a new test is live.' });
+        }
+
+        const existingFeedback = await Result.exists({
+            testId,
+            'feedback.studentId': studentId
+        });
+        if (existingFeedback) {
+            return res.status(409).json({ success: false, message: 'Feedback has already been submitted for this test.' });
+        }
+
         const team = await Team.findOne({ testId, members: studentId }).sort({ createdAt: -1 });
         if (!team) {
             return res.status(404).json({ success: false, message: 'No team record was found for this test.' });
@@ -381,11 +427,6 @@ export const submitFeedback = async (req, res) => {
 
         const studentInfo = await User.findById(studentId).select('name upi').lean();
         const cleanFeedback = feedback.trim();
-
-        await Result.updateOne(
-            { testId, teamId: team._id },
-            { $pull: { feedback: { studentId } } }
-        );
 
         await Result.findOneAndUpdate(
             { testId, teamId: team._id },

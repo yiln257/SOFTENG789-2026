@@ -6,6 +6,7 @@ import CheckIn from '../models/CheckIn.js';
 import xlsx from 'xlsx';
 
 const FEEDBACK_WINDOW_MS = 10 * 60 * 1000;
+const PRE_TEST_CHECK_IN_TTL_MS = 15 * 60 * 1000;
 
 const getCell = (row, keys, fallback = '') => {
     for (const key of keys) {
@@ -54,6 +55,62 @@ const finishTest = async (testId, io) => {
     }
 
     return test;
+};
+
+const applyPreTestCheckIns = async (testId) => {
+    const cutoff = new Date(Date.now() - PRE_TEST_CHECK_IN_TTL_MS);
+    const preCheckIns = await CheckIn.find({
+        testId: null,
+        status: 'passed',
+        checkedAt: { $gt: cutoff }
+    }).lean();
+
+    if (preCheckIns.length > 0) {
+        await CheckIn.bulkWrite(preCheckIns.map((checkIn) => ({
+            updateOne: {
+                filter: { testId, studentId: checkIn.studentId },
+                update: {
+                    $set: {
+                        status: 'passed',
+                        distanceMeters: checkIn.distanceMeters,
+                        checkedAt: checkIn.checkedAt
+                    }
+                },
+                upsert: true
+            }
+        })));
+    }
+
+    await CheckIn.deleteMany({ testId: null });
+};
+
+const syncPresentMembersForActiveTeams = async (testId) => {
+    const teams = await Team.find({ testId, isActive: true }).select('_id leaderId members').lean();
+
+    for (const team of teams) {
+        const passedCheckIns = await CheckIn.find({
+            testId,
+            studentId: { $in: team.members },
+            status: 'passed'
+        }).select('studentId').lean();
+
+        if (passedCheckIns.length === 0) continue;
+
+        await Result.findOneAndUpdate(
+            { testId, teamId: team._id },
+            {
+                $setOnInsert: {
+                    activeStudentId: team.leaderId,
+                    answers: [],
+                    totalScore: 0
+                },
+                $addToSet: {
+                    presentMembers: { $each: passedCheckIns.map((record) => record.studentId) }
+                }
+            },
+            { upsert: true, new: true }
+        );
+    }
 };
 
 export const importTest = async (req, res) => {
@@ -109,6 +166,11 @@ export const publishTest = async (req, res) => {
             await finishTest(test._id, req.app.get('io'));
         }
 
+        await Test.updateMany(
+            { status: 'closed', feedbackOpenUntil: { $gt: new Date() } },
+            { $set: { feedbackOpenUntil: null } }
+        );
+
         const test = await Test.findByIdAndUpdate(
             testId,
             {
@@ -124,6 +186,8 @@ export const publishTest = async (req, res) => {
         }
 
         await Team.updateMany({ isActive: true, testId: null }, { $set: { testId: test._id } });
+        await applyPreTestCheckIns(test._id);
+        await syncPresentMembersForActiveTeams(test._id);
 
         req.app.get('io')?.emit('TEST_STARTED', {
             testId: test._id,
@@ -271,39 +335,6 @@ export const deleteTest = async (req, res) => {
         res.json({
             success: true,
             message: `Test record deleted. Removed ${resultDelete.deletedCount} result records, ${checkInDelete.deletedCount} check-in records, and ${removedTeams} teams.`
-        });
-    } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
-    }
-};
-
-export const deleteTestResults = async (req, res) => {
-    const { testId } = req.params;
-
-    try {
-        const test = await Test.findById(testId);
-        if (!test) {
-            const [resultDelete, checkInDelete] = await Promise.all([
-                Result.deleteMany({ testId }),
-                CheckIn.deleteMany({ testId })
-            ]);
-            return res.json({
-                success: true,
-                message: `The test record no longer exists. Cleared ${resultDelete.deletedCount} result records and ${checkInDelete.deletedCount} check-in records.`
-            });
-        }
-        if (test.status === 'published') {
-            return res.status(400).json({ success: false, message: 'Results cannot be deleted while the test is live.' });
-        }
-
-        const [resultDelete, checkInDelete] = await Promise.all([
-            Result.deleteMany({ testId }),
-            CheckIn.deleteMany({ testId })
-        ]);
-
-        res.json({
-            success: true,
-            message: `Deleted ${resultDelete.deletedCount} result records and ${checkInDelete.deletedCount} check-in records.`
         });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });

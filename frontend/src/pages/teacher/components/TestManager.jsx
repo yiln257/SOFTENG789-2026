@@ -12,6 +12,7 @@ export default function TestManager() {
     const [tests, setTests] = useState([]);
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState('');
+    const [selectedFileName, setSelectedFileName] = useState('No file selected');
     const navigate = useNavigate();
 
     const fetchTests = async () => {
@@ -30,6 +31,7 @@ export default function TestManager() {
     const handleImport = async (event) => {
         const file = event.target.files[0];
         if (!file) return;
+        setSelectedFileName(file.name);
 
         const formData = new FormData();
         formData.append('file', file);
@@ -70,17 +72,6 @@ export default function TestManager() {
         }
     };
 
-    const handleDeleteResults = async (testId) => {
-        if (!window.confirm('Delete all result records for this test?')) return;
-        try {
-            const res = await request.delete(`/tests/${testId}/results`);
-            setMessage(res.message || 'Results deleted.');
-            await fetchTests();
-        } catch (error) {
-            window.alert(error.message);
-        }
-    };
-
     return (
         <section className="card stack">
             <div className="row wrap">
@@ -89,7 +80,16 @@ export default function TestManager() {
                     <p className="subtitle">Import, publish, control, and review tests.</p>
                 </div>
                 <div className="spacer" />
-                <input className="field" style={{ maxWidth: 320 }} type="file" accept=".xlsx,.xls,.csv" onChange={handleImport} disabled={loading} />
+                <input
+                    id="test-file-upload"
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    onChange={handleImport}
+                    disabled={loading}
+                    style={{ display: 'none' }}
+                />
+                <label className="btn secondary" htmlFor="test-file-upload">Import Test File</label>
+                <span className="muted">{selectedFileName}</span>
             </div>
 
             {message && <p className="status-text">{message}</p>}
@@ -125,7 +125,6 @@ export default function TestManager() {
                                     {test.status === 'closed' && (
                                         <>
                                             <button className="btn secondary" onClick={() => navigate(`/teacher/stats/${test._id}`)}>View Results</button>
-                                            <button className="btn warning" onClick={() => handleDeleteResults(test._id)}>Delete Results</button>
                                             <button className="btn danger" onClick={() => handleDeleteRecord(test._id, test.status)}>Delete Record</button>
                                         </>
                                     )}

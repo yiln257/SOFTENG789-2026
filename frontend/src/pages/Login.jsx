@@ -20,7 +20,7 @@ export default function Login() {
 
         try {
             const res = role === 'teacher'
-                ? await request.post('/auth/teacher/login', { email: account, password })
+                ? await request.post('/auth/teacher/login', { account, email: account, password })
                 : await request.post('/auth/student/login', { upi: account, password });
 
             if (res.success) {
@@ -70,8 +70,8 @@ export default function Login() {
                 <form className="stack" onSubmit={handleLogin}>
                     <input
                         className="field"
-                        type={role === 'teacher' ? 'email' : 'text'}
-                        placeholder={role === 'teacher' ? 'Teacher email' : 'Student UPI'}
+                        type="text"
+                        placeholder={role === 'teacher' ? 'Teacher account' : 'Student UPI'}
                         value={account}
                         onChange={(event) => setAccount(event.target.value)}
                         required

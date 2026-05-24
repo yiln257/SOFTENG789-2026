@@ -65,8 +65,7 @@ export default function StudentDashboard() {
     }, [socket, lobby?.team?._id, user]);
 
     const checkInBadge = useMemo(() => {
-        if (!lobby?.activeTest) return <span className="badge warning">Waiting for test</span>;
-        if (!lobby.checkIn) return <span className="badge">Not checked in</span>;
+        if (!lobby?.checkIn) return <span className="badge">Not checked in</span>;
         if (lobby.checkIn.status === 'passed') return <span className="badge success">Checked in</span>;
         return <span className="badge danger">Failed</span>;
     }, [lobby]);
@@ -135,7 +134,7 @@ export default function StudentDashboard() {
         navigate(`/student/test/${lobby.activeTest.id}`);
     };
 
-    const feedbackEnabled = lobby?.feedback?.available;
+    const feedbackEnabled = lobby?.feedback?.available && !lobby?.feedback?.submitted;
 
     if (loading) {
         return <main className="app-shell">Loading lobby...</main>;
@@ -146,7 +145,7 @@ export default function StudentDashboard() {
             <header className="topbar">
                 <div>
                     <h1>Student Lobby</h1>
-                    <p className="subtitle">{user?.name} · {user?.upi}</p>
+                    <p className="subtitle">{user?.name} - {user?.upi}</p>
                 </div>
                 <button className="btn ghost" onClick={logout}>Sign Out</button>
             </header>
@@ -275,12 +274,16 @@ export default function StudentDashboard() {
                     <div className="row">
                         <h2>Feedback</h2>
                         <div className="spacer" />
-                        <span className={feedbackEnabled ? 'badge success' : 'badge'}>{feedbackEnabled ? 'Open' : 'Locked'}</span>
+                        <span className={feedbackEnabled ? 'badge success' : 'badge'}>
+                            {lobby?.feedback?.submitted ? 'Submitted' : feedbackEnabled ? 'Open' : 'Locked'}
+                        </span>
                     </div>
                     <p className="muted">
-                        {feedbackEnabled
-                            ? `Open until ${new Date(lobby.feedback.closesAt).toLocaleTimeString()}`
-                            : 'Available for 10 minutes after a completed test.'}
+                        {lobby?.feedback?.submitted
+                            ? 'Feedback has already been submitted for this test.'
+                            : feedbackEnabled
+                                ? `Open until ${new Date(lobby.feedback.closesAt).toLocaleTimeString()}`
+                                : 'Available for 10 minutes after a completed test.'}
                     </p>
                     <button
                         className="btn"

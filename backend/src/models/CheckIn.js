@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 
 const checkInSchema = new mongoose.Schema({
-    testId: { type: mongoose.Schema.Types.ObjectId, ref: 'Test', required: true },
+    testId: { type: mongoose.Schema.Types.ObjectId, ref: 'Test', default: null },
     studentId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     status: {
         type: String,

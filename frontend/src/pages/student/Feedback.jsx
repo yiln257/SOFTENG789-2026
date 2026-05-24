@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import request from '../../api/request';
+import { useSocket } from '../../hooks/useSocket';
 
 export default function StudentFeedback() {
     const { testId } = useParams();
     const navigate = useNavigate();
+    const socket = useSocket();
     const [feedbackText, setFeedbackText] = useState('');
     const [loading, setLoading] = useState(false);
     const [isSubmitted, setIsSubmitted] = useState(false);
@@ -17,8 +19,11 @@ export default function StudentFeedback() {
             try {
                 const res = await request.get('/student/lobby');
                 setLobby(res);
+                setIsSubmitted(!!res.feedback?.submitted);
                 if (!res.feedback?.available || res.feedback.testId?.toString() !== testId) {
                     setMessage('Feedback is not open for this test.');
+                } else if (res.feedback?.submitted) {
+                    setMessage('Feedback has already been submitted for this test.');
                 }
             } catch (error) {
                 setMessage(error.message);
@@ -32,12 +37,30 @@ export default function StudentFeedback() {
         return () => clearInterval(timer);
     }, []);
 
+    useEffect(() => {
+        if (!socket) return undefined;
+
+        const handleTestStarted = () => {
+            setLobby((current) => ({
+                ...(current || {}),
+                feedback: { available: false, submitted: false }
+            }));
+            setMessage('Feedback is closed because a new test is live.');
+        };
+
+        socket.on('TEST_STARTED', handleTestStarted);
+        return () => socket.off('TEST_STARTED', handleTestStarted);
+    }, [socket]);
+
     const remainingSeconds = useMemo(() => {
         if (!lobby?.feedback?.closesAt) return 0;
         return Math.max(0, Math.floor((new Date(lobby.feedback.closesAt).getTime() - now) / 1000));
     }, [lobby, now]);
 
-    const isOpen = lobby?.feedback?.available && lobby.feedback.testId?.toString() === testId && remainingSeconds > 0;
+    const isOpen = lobby?.feedback?.available
+        && !lobby.feedback.submitted
+        && lobby.feedback.testId?.toString() === testId
+        && remainingSeconds > 0;
 
     const handleSubmit = async (event) => {
         event.preventDefault();

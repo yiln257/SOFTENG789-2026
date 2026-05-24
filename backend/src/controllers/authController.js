@@ -1,5 +1,8 @@
 import User from '../models/User.js';
 import jwt from 'jsonwebtoken';
+import fs from 'fs';
+import path from 'path';
+import dotenv from 'dotenv';
 
 const generateToken = (payload) => {
     return jwt.sign(payload, process.env.JWT_SECRET || 'your_super_secret_key', { expiresIn: '12h' });
@@ -7,21 +10,48 @@ const generateToken = (payload) => {
 
 const normalizeUPI = (upi) => upi?.toString().trim().toLowerCase();
 
-export const teacherLogin = async (req, res) => {
-    const { email, password } = req.body;
-    const TEACHER_EMAIL = process.env.TEACHER_EMAIL || 'jesin.james@auckland.ac.nz';
-    const TEACHER_PASSWORD = process.env.TEACHER_PASSWORD || '88888888';
+const readEnvFile = () => {
+    try {
+        const envPath = path.join(process.cwd(), '.env');
+        if (!fs.existsSync(envPath)) return {};
+        return dotenv.parse(fs.readFileSync(envPath));
+    } catch (error) {
+        console.warn('Unable to read .env for teacher login:', error.message);
+        return {};
+    }
+};
 
-    if (email !== TEACHER_EMAIL || password !== TEACHER_PASSWORD) {
-        return res.status(401).json({ success: false, message: 'Teacher email or password is incorrect.' });
+const getTeacherCredentials = () => {
+    const envFile = readEnvFile();
+    const source = { ...process.env, ...envFile };
+
+    return {
+        account: (
+            source.TEACHER_ACCOUNT
+            || source.TEACHER_USERNAME
+            || source.TEACHER_USER
+            || source.TEACHER_EMAIL
+            || 'jesin.james@auckland.ac.nz'
+        ).toString().trim(),
+        password: (source.TEACHER_PASSWORD || '88888888').toString()
+    };
+};
+
+export const teacherLogin = async (req, res) => {
+    const account = (req.body.account || req.body.email || '').toString().trim();
+    const { password } = req.body;
+    const teacher = getTeacherCredentials();
+
+    if (account !== teacher.account || password !== teacher.password) {
+        return res.status(401).json({ success: false, message: 'Teacher account or password is incorrect.' });
     }
 
-    const token = generateToken({ role: 'teacher', email });
+    const token = generateToken({ role: 'teacher', account });
     return res.json({
         success: true,
         message: 'Teacher login successful.',
         token,
-        user: { role: 'teacher', email }
+        user: { role: 'teacher', account, email: account }
     });
 };
 
