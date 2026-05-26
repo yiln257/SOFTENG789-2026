@@ -110,22 +110,28 @@ export default function StudentManager() {
                     <h3>Import Format</h3>
                     <p>Upload an Excel or CSV roster with one row per student.</p>
                 </div>
-                <div className="format-grid">
-                    <span>
-                        <strong>Name</strong>
-                        <small>Student full name</small>
-                    </span>
-                    <span>
-                        <strong>UPI</strong>
-                        <small>Student UPI</small>
-                    </span>
+                <div className="format-table-shell">
+                    <table className="format-table">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>UPI</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>Student full name</td>
+                                <td>Student UPI</td>
+                            </tr>
+                        </tbody>
+                    </table>
                 </div>
                 <p className="muted">The uploaded roster fully replaces the current student list. Emails are generated as UPI@aucklanduni.ac.nz, and existing passwords are kept for unchanged UPIs.</p>
             </div>
 
             {message && <p className="status-text">{message}</p>}
 
-            <div className="table-shell">
+            <div className="table-shell scroll-area">
                 <table className="table roster-table">
                     <thead>
                         <tr>
@@ -138,16 +144,10 @@ export default function StudentManager() {
                     <tbody>
                         {students.map((student) => (
                             <tr key={student._id || student.upi}>
-                                <td>
-                                    <span className="student-name">{student.name}</span>
-                                </td>
-                                <td>
-                                    <span className="upi-code">{student.upi}</span>
-                                </td>
+                                <td>{student.name}</td>
+                                <td>{student.upi}</td>
                                 <td>{student.email}</td>
-                                <td>
-                                    <span className="password-code">{student.password}</span>
-                                </td>
+                                <td>{student.password}</td>
                             </tr>
                         ))}
                         {students.length === 0 && (

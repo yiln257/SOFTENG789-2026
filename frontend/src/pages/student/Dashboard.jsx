@@ -232,7 +232,7 @@ export default function StudentDashboard() {
                                     disabled={teammates.length >= 3}
                                     onClick={() => setTeammates((current) => [...current, emptyMate()])}
                                 >
-                                    Add Teammate
+                                    Add
                                 </button>
                                 <button
                                     className="btn ghost"

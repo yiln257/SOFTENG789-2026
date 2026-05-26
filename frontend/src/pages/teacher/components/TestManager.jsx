@@ -99,38 +99,36 @@ export default function TestManager() {
                     <h3>Import Format</h3>
                     <p>Upload an Excel or CSV file with one row per question.</p>
                 </div>
-                <div className="format-grid test-format-grid">
-                    <span>
-                        <strong>Seq</strong>
-                        <small>Question number</small>
-                    </span>
-                    <span>
-                        <strong>OptionA</strong>
-                        <small>Answer 1</small>
-                    </span>
-                    <span>
-                        <strong>OptionB</strong>
-                        <small>Answer 2</small>
-                    </span>
-                    <span>
-                        <strong>OptionC</strong>
-                        <small>Answer 3</small>
-                    </span>
-                    <span>
-                        <strong>OptionD</strong>
-                        <small>Answer 4</small>
-                    </span>
-                    <span>
-                        <strong>CorrectAnswer</strong>
-                        <small>A, B, C or D</small>
-                    </span>
+                <div className="format-table-shell">
+                    <table className="format-table test-format-table">
+                        <thead>
+                            <tr>
+                                <th>Seq</th>
+                                <th>OptionA</th>
+                                <th>OptionB</th>
+                                <th>OptionC</th>
+                                <th>OptionD</th>
+                                <th>CorrectAnswer</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>Question number</td>
+                                <td>Answer 1</td>
+                                <td>Answer 2</td>
+                                <td>Answer 3</td>
+                                <td>Answer 4</td>
+                                <td>A, B, C or D</td>
+                            </tr>
+                        </tbody>
+                    </table>
                 </div>
                 <p className="muted">The test name comes from the file name.</p>
             </div>
 
             {message && <p className="status-text">{message}</p>}
 
-            <div className="table-shell">
+            <div className="table-shell scroll-area">
                 <table className="table roster-table test-table">
                     <thead>
                         <tr>
@@ -144,9 +142,7 @@ export default function TestManager() {
                     <tbody>
                         {tests.map((test) => (
                             <tr key={test._id}>
-                                <td>
-                                    <span className="test-name">{test.name || 'Untitled Test'}</span>
-                                </td>
+                                <td>{test.name || 'Untitled Test'}</td>
                                 <td><span className="badge">{statusLabel[test.status] || test.status}</span></td>
                                 <td>{test.questionCount || 0}</td>
                                 <td>{new Date(test.createdAt).toLocaleString()}</td>
@@ -155,7 +151,7 @@ export default function TestManager() {
                                         {test.status === 'draft' && (
                                             <>
                                                 <button className="btn" onClick={() => handlePublish(test._id)}>Publish</button>
-                                                <button className="btn danger" onClick={() => handleDeleteRecord(test._id, test.status)}>Delete Draft</button>
+                                                <button className="btn danger" onClick={() => handleDeleteRecord(test._id, test.status)}>Delete</button>
                                             </>
                                         )}
                                         {test.status === 'published' && (
