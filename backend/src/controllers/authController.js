@@ -24,16 +24,19 @@ const readEnvFile = () => {
 const getTeacherCredentials = () => {
     const envFile = readEnvFile();
     const source = { ...process.env, ...envFile };
+    const account = (
+        source.TEACHER_ACCOUNT
+        || source.TEACHER_USERNAME
+        || source.TEACHER_USER
+        || source.TEACHER_EMAIL
+        || ''
+    ).toString().trim();
+    const password = (source.TEACHER_PASSWORD || '').toString();
 
     return {
-        account: (
-            source.TEACHER_ACCOUNT
-            || source.TEACHER_USERNAME
-            || source.TEACHER_USER
-            || source.TEACHER_EMAIL
-            || 'jesin.james@auckland.ac.nz'
-        ).toString().trim(),
-        password: (source.TEACHER_PASSWORD || '88888888').toString()
+        account,
+        password,
+        isConfigured: Boolean(account && password)
     };
 };
 
@@ -41,6 +44,10 @@ export const teacherLogin = async (req, res) => {
     const account = (req.body.account || req.body.email || '').toString().trim();
     const { password } = req.body;
     const teacher = getTeacherCredentials();
+
+    if (!teacher.isConfigured) {
+        return res.status(500).json({ success: false, message: 'Teacher login is not configured. Set TEACHER_EMAIL and TEACHER_PASSWORD in backend/.env.' });
+    }
 
     if (account !== teacher.account || password !== teacher.password) {
         return res.status(401).json({ success: false, message: 'Teacher account or password is incorrect.' });

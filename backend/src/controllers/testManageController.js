@@ -15,6 +15,13 @@ const getCell = (row, keys, fallback = '') => {
     return fallback;
 };
 
+const getTestNameFromFile = (file) => {
+    const originalName = file?.originalname || '';
+    const baseName = originalName.split(/[\\/]/).pop() || '';
+    const nameWithoutExtension = baseName.replace(/\.[^.]+$/, '').trim();
+    return nameWithoutExtension || 'Untitled Test';
+};
+
 const dissolveTeams = async (filter) => {
     const teams = await Team.find(filter).select('_id').lean();
     const teamIds = teams.map((team) => team._id);
@@ -144,14 +151,16 @@ export const importTest = async (req, res) => {
             return res.status(400).json({ success: false, message: 'No valid questions were found in the file.' });
         }
 
+        const testName = getTestNameFromFile(req.file);
         const test = await Test.create({
+            name: testName,
             status: 'draft',
             questions,
             scoringRules: { firstTry: 3, secondTry: 2, thirdTry: 1 },
             currentQuestionSeq: questions[0].seq || 1
         });
 
-        res.status(200).json({ success: true, message: 'Test imported successfully.', testId: test._id });
+        res.status(200).json({ success: true, message: `${testName} imported successfully.`, testId: test._id });
     } catch (error) {
         res.status(500).json({ success: false, message: `File parsing failed: ${error.message}` });
     }
@@ -267,7 +276,7 @@ export const closeTest = async (req, res) => {
 export const getTestList = async (req, res) => {
     try {
         const tests = await Test.find()
-            .select('_id status createdAt currentQuestionSeq questions feedbackOpenUntil')
+            .select('_id name status createdAt currentQuestionSeq questions feedbackOpenUntil')
             .sort({ createdAt: -1 })
             .lean();
 
@@ -275,6 +284,7 @@ export const getTestList = async (req, res) => {
             success: true,
             tests: tests.map((test) => ({
                 _id: test._id,
+                name: test.name || 'Untitled Test',
                 status: test.status,
                 createdAt: test.createdAt,
                 currentQuestionSeq: test.currentQuestionSeq,
@@ -300,6 +310,7 @@ export const getTestDetail = async (req, res) => {
             success: true,
             test: {
                 _id: test._id,
+                name: test.name || 'Untitled Test',
                 status: test.status,
                 createdAt: test.createdAt,
                 currentQuestionSeq: test.currentQuestionSeq,

@@ -41,7 +41,7 @@ export default function TeacherDashboard() {
         <main className="app-shell">
             <header className="topbar">
                 <div>
-                    <h1>Teacher Console</h1>
+                    <h1>Teacher Dashboard</h1>
                     <p className="subtitle">{user?.email}</p>
                 </div>
                 <button className="btn ghost" onClick={logout}>Sign Out</button>
@@ -53,7 +53,7 @@ export default function TeacherDashboard() {
                     <p className="subtitle">{gpsStatus}</p>
                 </div>
                 <div className="spacer" />
-                <button className="btn" onClick={updateGPS}>Set GPS Point</button>
+                <button className="btn" onClick={updateGPS}>Set GPS</button>
             </section>
 
             <nav className="segmented" style={{ marginBottom: 18 }}>

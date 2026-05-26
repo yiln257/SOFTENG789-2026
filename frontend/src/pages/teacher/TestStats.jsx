@@ -2,12 +2,14 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import request from '../../api/request';
+import { useSocket } from '../../hooks/useSocket';
 
 const rateToNumber = (value) => Number.parseFloat((value || '0').replace('%', '')) || 0;
 
 export default function TestStats() {
     const { testId } = useParams();
     const navigate = useNavigate();
+    const socket = useSocket();
     const [stats, setStats] = useState(null);
     const [loading, setLoading] = useState(true);
     const [message, setMessage] = useState('');
@@ -25,6 +27,35 @@ export default function TestStats() {
         };
         fetchStats();
     }, [testId]);
+
+    useEffect(() => {
+        if (!socket) return undefined;
+
+        const handleNewFeedback = (data) => {
+            if (data.testId?.toString() !== testId) return;
+
+            setStats((current) => {
+                if (!current) return current;
+
+                const nextFeedback = {
+                    studentName: data.name || 'Unknown student',
+                    upi: data.upi || 'N/A',
+                    content: data.content,
+                    submittedAt: data.timestamp || new Date().toISOString()
+                };
+                const existingFeedbacks = current.feedbacks || [];
+                const withoutDuplicate = existingFeedbacks.filter((item) => item.upi !== nextFeedback.upi);
+
+                return {
+                    ...current,
+                    feedbacks: [nextFeedback, ...withoutDuplicate]
+                };
+            });
+        };
+
+        socket.on('NEW_FEEDBACK_RECEIVED', handleNewFeedback);
+        return () => socket.off('NEW_FEEDBACK_RECEIVED', handleNewFeedback);
+    }, [socket, testId]);
 
     const handleExport = async () => {
         try {
@@ -85,7 +116,7 @@ export default function TestStats() {
                 <article className="card">
                     <h3>Checked In</h3>
                     <strong style={{ fontSize: 32 }}>{counts.passed}</strong>
-                    <p className="subtitle">{counts.failed} failed · {counts.missing} missing</p>
+                    <p className="subtitle">{counts.failed} failed - {counts.missing} missing</p>
                 </article>
                 <article className="card">
                     <h3>Questions</h3>
@@ -157,10 +188,14 @@ export default function TestStats() {
             </section>
 
             <section className="card stack">
-                <h2>Feedback</h2>
+                <div className="row wrap">
+                    <h2>Feedback</h2>
+                    <span className="spacer" />
+                    <span className="badge success">Live</span>
+                </div>
                 {stats.feedbacks.length > 0 ? stats.feedbacks.map((item, index) => (
                     <div className="panel" key={`${item.upi}-${index}`}>
-                        <strong>{item.studentName} · {item.upi}</strong>
+                        <strong>{item.studentName} - {item.upi}</strong>
                         <p>{item.content}</p>
                     </div>
                 )) : <p className="muted">No feedback submitted.</p>}

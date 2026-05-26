@@ -5,7 +5,8 @@ export default function StudentManager() {
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState('');
     const [students, setStudents] = useState([]);
-    const [selectedFileName, setSelectedFileName] = useState('No file selected');
+    const [sendingEmails, setSendingEmails] = useState(false);
+    const [clearingStudents, setClearingStudents] = useState(false);
 
     const fetchStudents = async () => {
         try {
@@ -23,7 +24,6 @@ export default function StudentManager() {
     const handleImport = async (event) => {
         const file = event.target.files[0];
         if (!file) return;
-        setSelectedFileName(file.name);
 
         const formData = new FormData();
         formData.append('file', file);
@@ -42,67 +42,127 @@ export default function StudentManager() {
         }
     };
 
-    const handlePrintPasswords = async () => {
-        setLoading(true);
+    const handleSendPasswordEmails = async () => {
+        if (!window.confirm('Send login password emails to all imported students?')) return;
+
+        setSendingEmails(true);
         setMessage('');
         try {
-            const res = await request.post('/teams/print-passwords');
-            setMessage(res.message || 'Passwords printed to the backend console.');
+            const res = await request.post('/teams/send-password-emails');
+            setMessage(res.message || 'Password emails sent.');
         } catch (error) {
             setMessage(error.message);
         } finally {
-            setLoading(false);
+            setSendingEmails(false);
         }
     };
 
+    const handleClearStudents = async () => {
+        if (!window.confirm('Clear all imported students? This cannot be undone.')) return;
+
+        setClearingStudents(true);
+        setMessage('');
+        try {
+            const res = await request.delete('/teams/students');
+            setStudents([]);
+            setMessage(res.message || 'Student roster cleared.');
+        } catch (error) {
+            setMessage(error.message);
+        } finally {
+            setClearingStudents(false);
+        }
+    };
+
+    const isBusy = loading || sendingEmails || clearingStudents;
+
     return (
-        <section className="card stack">
-            <div>
-                <h2>Student Roster</h2>
-                <p className="subtitle">Uploading a roster replaces the current student list. Passwords are generated once and stay unchanged.</p>
+        <section className="card stack student-roster-panel">
+            <div className="student-roster-header">
+                <div>
+                    <h2>Students</h2>
+                    <p className="subtitle">Imported students and login credentials.</p>
+                </div>
+                <div className="roster-counts" aria-label="Roster summary">
+                    <span className="badge">{students.length} Students</span>
+                </div>
             </div>
 
-            <div className="row wrap">
+            <div className="roster-actions">
                 <input
                     id="student-roster-upload"
                     type="file"
                     accept=".xlsx,.xls,.csv"
                     onChange={handleImport}
-                    disabled={loading}
+                    disabled={isBusy}
                     style={{ display: 'none' }}
                 />
-                <label className="btn" htmlFor="student-roster-upload">Import Student Roster</label>
-                <span className="muted">{selectedFileName}</span>
-                <button className="btn secondary" type="button" onClick={handlePrintPasswords} disabled={loading}>
-                    Print Login Passwords
+                <label className={`btn ${isBusy ? 'disabled-label' : ''}`} htmlFor="student-roster-upload">Import File</label>
+                <button className="btn" type="button" onClick={handleSendPasswordEmails} disabled={isBusy || students.length === 0}>
+                    {sendingEmails ? 'Sending Emails...' : 'Send Emails'}
                 </button>
+                <button className="btn danger" type="button" onClick={handleClearStudents} disabled={isBusy || students.length === 0}>
+                    {clearingStudents ? 'Clearing...' : 'Delete'}
+                </button>
+            </div>
+
+            <div className="import-guide">
+                <div>
+                    <h3>Import Format</h3>
+                    <p>Upload an Excel or CSV roster with one row per student.</p>
+                </div>
+                <div className="format-grid">
+                    <span>
+                        <strong>Name</strong>
+                        <small>Student full name</small>
+                    </span>
+                    <span>
+                        <strong>UPI</strong>
+                        <small>Student UPI</small>
+                    </span>
+                </div>
+                <p className="muted">The uploaded roster fully replaces the current student list. Emails are generated as UPI@aucklanduni.ac.nz, and existing passwords are kept for unchanged UPIs.</p>
             </div>
 
             {message && <p className="status-text">{message}</p>}
 
-            <table className="table">
-                <thead>
-                    <tr>
-                        <th>Name</th>
-                        <th>UPI</th>
-                        <th>Password</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {students.map((student) => (
-                        <tr key={student._id || student.upi}>
-                            <td>{student.name}</td>
-                            <td>{student.upi}</td>
-                            <td>{student.password}</td>
-                        </tr>
-                    ))}
-                    {students.length === 0 && (
+            <div className="table-shell">
+                <table className="table roster-table">
+                    <thead>
                         <tr>
-                            <td colSpan="3" className="muted">No students imported.</td>
+                            <th>Name</th>
+                            <th>UPI</th>
+                            <th>Email</th>
+                            <th>Password</th>
                         </tr>
-                    )}
-                </tbody>
-            </table>
+                    </thead>
+                    <tbody>
+                        {students.map((student) => (
+                            <tr key={student._id || student.upi}>
+                                <td>
+                                    <span className="student-name">{student.name}</span>
+                                </td>
+                                <td>
+                                    <span className="upi-code">{student.upi}</span>
+                                </td>
+                                <td>{student.email}</td>
+                                <td>
+                                    <span className="password-code">{student.password}</span>
+                                </td>
+                            </tr>
+                        ))}
+                        {students.length === 0 && (
+                            <tr>
+                                <td colSpan="4" className="empty-table-cell">
+                                    <div className="empty-state">
+                                        <strong>No students imported.</strong>
+                                        <span>Import a roster to create student login credentials.</span>
+                                    </div>
+                                </td>
+                            </tr>
+                        )}
+                    </tbody>
+                </table>
+            </div>
         </section>
     );
 }

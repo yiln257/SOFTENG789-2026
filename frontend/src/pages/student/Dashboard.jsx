@@ -144,7 +144,7 @@ export default function StudentDashboard() {
         <main className="app-shell">
             <header className="topbar">
                 <div>
-                    <h1>Student Lobby</h1>
+                    <h1>Student Dashboard</h1>
                     <p className="subtitle">{user?.name} - {user?.upi}</p>
                 </div>
                 <button className="btn ghost" onClick={logout}>Sign Out</button>

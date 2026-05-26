@@ -23,6 +23,7 @@ export default function StudentLiveTest() {
 
     const teamId = team?._id || user?.teamId;
     const progress = Math.min((currentSeq / Math.max(totalQuestions, 1)) * 100, 100);
+    const remainingAttempts = isLocked ? 0 : Math.max(3 - attempts, 0);
 
     const fetchTeam = async () => {
         if (teamId) return teamId;
@@ -117,10 +118,10 @@ export default function StudentLiveTest() {
                         [selectedOption]: 'wrong',
                         [res.correctAnswer]: 'correct'
                     }));
-                    setMessage(`No attempts left. Correct answer: ${res.correctAnswer}.`);
+                    setMessage(`No attempts left. Correct answer: ${res.correctAnswer}`);
                 } else {
                     setOptionStates((prev) => ({ ...prev, [selectedOption]: 'wrong' }));
-                    setMessage(`Incorrect. Attempts used: ${res.attempts}.`);
+                    setMessage(`Incorrect. Attempts used: ${res.attempts}`);
                 }
             }
         } catch (error) {
@@ -181,7 +182,7 @@ export default function StudentLiveTest() {
                         <div className="option-grid">
                             {Object.entries(options).map(renderOption)}
                         </div>
-                        <p className="muted">Attempts used: {attempts}</p>
+                        <p className="muted">Attempts remaining: {remainingAttempts}</p>
                     </div>
                 )}
 

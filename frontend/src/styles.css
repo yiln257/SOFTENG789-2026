@@ -242,6 +242,112 @@ button {
     color: var(--muted);
 }
 
+.student-roster-panel {
+    gap: 16px;
+}
+
+.student-roster-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.roster-counts,
+.roster-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.roster-counts {
+    justify-content: flex-end;
+}
+
+.roster-actions {
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-soft);
+}
+
+.import-guide {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #f8fbff;
+}
+
+.import-guide h3 {
+    margin: 0 0 6px;
+    font-size: 16px;
+}
+
+.import-guide p {
+    margin: 0;
+}
+
+.format-grid {
+    display: flex;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.format-grid span {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    width: fit-content;
+    min-width: 120px;
+    min-height: 58px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: white;
+    color: var(--muted);
+}
+
+.format-grid strong {
+    color: var(--text);
+    margin: 0 0 4px;
+    white-space: nowrap;
+}
+
+.format-grid small {
+    color: var(--muted);
+    line-height: 1.35;
+}
+
+.test-format-grid {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 2px;
+}
+
+.test-format-grid span {
+    flex: 0 0 auto;
+    min-width: 128px;
+}
+
+.disabled-label {
+    cursor: not-allowed;
+    opacity: 0.55;
+    pointer-events: none;
+}
+
+.table-shell {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: white;
+}
+
 .table {
     width: 100%;
     border-collapse: collapse;
@@ -259,6 +365,78 @@ button {
     color: var(--muted);
     font-size: 13px;
     font-weight: 700;
+}
+
+.table-shell .table th,
+.table-shell .table td {
+    border-bottom: 1px solid var(--border);
+}
+
+.table-shell .table tr:last-child td {
+    border-bottom: 0;
+}
+
+.roster-table {
+    min-width: 720px;
+}
+
+.roster-table th {
+    background: #f8fbff;
+}
+
+.student-name {
+    font-weight: 700;
+}
+
+.upi-code,
+.password-code {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    background: #f1f5f9;
+    color: #1e293b;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    font-size: 13px;
+}
+
+.test-name {
+    display: inline-block;
+    max-width: 240px;
+    overflow-wrap: anywhere;
+    font-weight: 700;
+}
+
+.password-code {
+    background: var(--primary-soft);
+    color: var(--primary-dark);
+    font-weight: 700;
+}
+
+.test-table {
+    min-width: 800px;
+}
+
+.table-actions {
+    gap: 8px;
+}
+
+.empty-table-cell {
+    padding: 28px 12px;
+}
+
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    color: var(--muted);
+    text-align: center;
+}
+
+.empty-state strong {
+    color: var(--text);
 }
 
 .progress {
@@ -343,6 +521,26 @@ button {
     .row {
         align-items: stretch;
         flex-direction: column;
+    }
+
+    .student-roster-header,
+    .roster-actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .roster-counts {
+        justify-content: flex-start;
+    }
+
+    .test-format-grid {
+        flex-wrap: wrap;
+        overflow-x: visible;
+    }
+
+    .format-grid span,
+    .test-format-grid span {
+        width: 100%;
     }
 
     .grid,

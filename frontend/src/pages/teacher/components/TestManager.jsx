@@ -12,7 +12,6 @@ export default function TestManager() {
     const [tests, setTests] = useState([]);
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState('');
-    const [selectedFileName, setSelectedFileName] = useState('No file selected');
     const navigate = useNavigate();
 
     const fetchTests = async () => {
@@ -31,7 +30,6 @@ export default function TestManager() {
     const handleImport = async (event) => {
         const file = event.target.files[0];
         if (!file) return;
-        setSelectedFileName(file.name);
 
         const formData = new FormData();
         formData.append('file', file);
@@ -73,13 +71,18 @@ export default function TestManager() {
     };
 
     return (
-        <section className="card stack">
-            <div className="row wrap">
+        <section className="card stack student-roster-panel">
+            <div className="student-roster-header">
                 <div>
                     <h2>Tests</h2>
                     <p className="subtitle">Import, publish, control, and review tests.</p>
                 </div>
-                <div className="spacer" />
+                <div className="roster-counts" aria-label="Tests summary">
+                    <span className="badge">{tests.length} Tests</span>
+                </div>
+            </div>
+
+            <div className="roster-actions">
                 <input
                     id="test-file-upload"
                     type="file"
@@ -88,57 +91,99 @@ export default function TestManager() {
                     disabled={loading}
                     style={{ display: 'none' }}
                 />
-                <label className="btn secondary" htmlFor="test-file-upload">Import Test File</label>
-                <span className="muted">{selectedFileName}</span>
+                <label className={`btn ${loading ? 'disabled-label' : ''}`} htmlFor="test-file-upload">Import File</label>
+            </div>
+
+            <div className="import-guide">
+                <div>
+                    <h3>Import Format</h3>
+                    <p>Upload an Excel or CSV file with one row per question.</p>
+                </div>
+                <div className="format-grid test-format-grid">
+                    <span>
+                        <strong>Seq</strong>
+                        <small>Question number</small>
+                    </span>
+                    <span>
+                        <strong>OptionA</strong>
+                        <small>Answer 1</small>
+                    </span>
+                    <span>
+                        <strong>OptionB</strong>
+                        <small>Answer 2</small>
+                    </span>
+                    <span>
+                        <strong>OptionC</strong>
+                        <small>Answer 3</small>
+                    </span>
+                    <span>
+                        <strong>OptionD</strong>
+                        <small>Answer 4</small>
+                    </span>
+                    <span>
+                        <strong>CorrectAnswer</strong>
+                        <small>A, B, C or D</small>
+                    </span>
+                </div>
+                <p className="muted">The test name comes from the file name.</p>
             </div>
 
             {message && <p className="status-text">{message}</p>}
 
-            <table className="table">
-                <thead>
-                    <tr>
-                        <th>Test ID</th>
-                        <th>Status</th>
-                        <th>Questions</th>
-                        <th>Created</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {tests.map((test) => (
-                        <tr key={test._id}>
-                            <td>{test._id}</td>
-                            <td><span className="badge">{statusLabel[test.status] || test.status}</span></td>
-                            <td>{test.questionCount || 0}</td>
-                            <td>{new Date(test.createdAt).toLocaleString()}</td>
-                            <td>
-                                <div className="row wrap">
-                                    {test.status === 'draft' && (
-                                        <>
-                                            <button className="btn" onClick={() => handlePublish(test._id)}>Publish</button>
-                                            <button className="btn danger" onClick={() => handleDeleteRecord(test._id, test.status)}>Delete Draft</button>
-                                        </>
-                                    )}
-                                    {test.status === 'published' && (
-                                        <button className="btn" onClick={() => navigate(`/teacher/live/${test._id}`)}>Control</button>
-                                    )}
-                                    {test.status === 'closed' && (
-                                        <>
-                                            <button className="btn secondary" onClick={() => navigate(`/teacher/stats/${test._id}`)}>View Results</button>
-                                            <button className="btn danger" onClick={() => handleDeleteRecord(test._id, test.status)}>Delete Record</button>
-                                        </>
-                                    )}
-                                </div>
-                            </td>
-                        </tr>
-                    ))}
-                    {tests.length === 0 && (
+            <div className="table-shell">
+                <table className="table roster-table test-table">
+                    <thead>
                         <tr>
-                            <td colSpan="5" className="muted">No tests yet.</td>
+                            <th>Name</th>
+                            <th>Status</th>
+                            <th>Questions</th>
+                            <th>Created</th>
+                            <th>Actions</th>
                         </tr>
-                    )}
-                </tbody>
-            </table>
+                    </thead>
+                    <tbody>
+                        {tests.map((test) => (
+                            <tr key={test._id}>
+                                <td>
+                                    <span className="test-name">{test.name || 'Untitled Test'}</span>
+                                </td>
+                                <td><span className="badge">{statusLabel[test.status] || test.status}</span></td>
+                                <td>{test.questionCount || 0}</td>
+                                <td>{new Date(test.createdAt).toLocaleString()}</td>
+                                <td>
+                                    <div className="row wrap table-actions">
+                                        {test.status === 'draft' && (
+                                            <>
+                                                <button className="btn" onClick={() => handlePublish(test._id)}>Publish</button>
+                                                <button className="btn danger" onClick={() => handleDeleteRecord(test._id, test.status)}>Delete Draft</button>
+                                            </>
+                                        )}
+                                        {test.status === 'published' && (
+                                            <button className="btn" onClick={() => navigate(`/teacher/live/${test._id}`)}>Control</button>
+                                        )}
+                                        {test.status === 'closed' && (
+                                            <>
+                                                <button className="btn" onClick={() => navigate(`/teacher/stats/${test._id}`)}>View Results</button>
+                                                <button className="btn danger" onClick={() => handleDeleteRecord(test._id, test.status)}>Delete</button>
+                                            </>
+                                        )}
+                                    </div>
+                                </td>
+                            </tr>
+                        ))}
+                        {tests.length === 0 && (
+                            <tr>
+                                <td colSpan="5" className="empty-table-cell">
+                                    <div className="empty-state">
+                                        <strong>No tests yet.</strong>
+                                        <span>Import a test file to create your first test.</span>
+                                    </div>
+                                </td>
+                            </tr>
+                        )}
+                    </tbody>
+                </table>
+            </div>
         </section>
     );
 }

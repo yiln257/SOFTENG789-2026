@@ -5,9 +5,11 @@ import User from '../models/User.js';
 import CheckIn from '../models/CheckIn.js';
 import * as redisService from '../services/redisService.js';
 import { calculateDistance } from '../utils/geo.js';
+import crypto from 'crypto';
 
 const CHECK_IN_RADIUS_METERS = 500;
 const PRE_TEST_CHECK_IN_TTL_MS = 15 * 60 * 1000;
+const OPTION_KEYS = ['A', 'B', 'C', 'D'];
 
 const teamPopulation = [
     { path: 'members', select: 'name upi' },
@@ -44,6 +46,39 @@ const serializeTeam = (team, studentId) => {
         ...doc,
         isLeader: leaderId?.toString() === studentId.toString()
     };
+};
+
+const getStableOptionOrder = (testId, teamId, questionSeq) => {
+    return [...OPTION_KEYS].sort((left, right) => {
+        const leftHash = crypto
+            .createHash('sha256')
+            .update(`${testId}:${teamId}:${questionSeq}:${left}`)
+            .digest('hex');
+        const rightHash = crypto
+            .createHash('sha256')
+            .update(`${testId}:${teamId}:${questionSeq}:${right}`)
+            .digest('hex');
+        return leftHash.localeCompare(rightHash);
+    });
+};
+
+const getTeamQuestionOptions = (question, testId, teamId) => {
+    const originalOrder = getStableOptionOrder(testId, teamId, question.seq);
+    const displayToOriginal = {};
+    const options = {};
+    let correctDisplayAnswer = null;
+
+    OPTION_KEYS.forEach((displayKey, index) => {
+        const originalKey = originalOrder[index];
+        displayToOriginal[displayKey] = originalKey;
+        options[displayKey] = question.options[originalKey];
+
+        if (originalKey === question.correctAnswer) {
+            correctDisplayAnswer = displayKey;
+        }
+    });
+
+    return { options, displayToOriginal, correctDisplayAnswer };
 };
 
 const addPassedMemberToResult = async (testId, teamId, studentId) => {
@@ -288,6 +323,7 @@ export const fetchQuestionData = async (req, res) => {
 
         const leaderId = team.leaderId?._id || team.leaderId;
         const isOperator = leaderId.toString() === studentId.toString();
+        const shuffledQuestion = getTeamQuestionOptions(currentQuestion, testId, teamId);
 
         return res.json({
             success: true,
@@ -296,7 +332,7 @@ export const fetchQuestionData = async (req, res) => {
             totalQuestions: test.questions.length,
             question: {
                 seq: currentQuestion.seq,
-                options: currentQuestion.options
+                options: shuffledQuestion.options
             },
             team: serializeTeam(team, studentId)
         });
@@ -336,6 +372,12 @@ export const submitAnswer = async (req, res) => {
         if (!questionInfo) {
             return res.status(404).json({ success: false, message: 'Question not found.' });
         }
+        const shuffledQuestion = getTeamQuestionOptions(questionInfo, testId, teamId);
+        const originalSelectedOption = shuffledQuestion.displayToOriginal[selectedOption];
+
+        if (!originalSelectedOption) {
+            return res.status(400).json({ success: false, message: 'Selected option must be A, B, C, or D.' });
+        }
 
         let resultDoc = await Result.findOne({ testId, teamId });
         if (resultDoc?.answers.some((answer) => answer.questionSeq === parseInt(seq, 10))) {
@@ -343,7 +385,7 @@ export const submitAnswer = async (req, res) => {
         }
 
         const attempts = await redisService.incrementQuestionAttempts(testId, teamId, seq);
-        const isCorrect = selectedOption === questionInfo.correctAnswer;
+        const isCorrect = originalSelectedOption === questionInfo.correctAnswer;
         const isExhausted = !isCorrect && attempts >= 3;
         let scoreEarned = 0;
 
@@ -382,7 +424,7 @@ export const submitAnswer = async (req, res) => {
             isExhausted,
             scoreEarned,
             attempts,
-            correctAnswer: isExhausted ? questionInfo.correctAnswer : null
+            correctAnswer: isExhausted ? shuffledQuestion.correctDisplayAnswer : null
         });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });

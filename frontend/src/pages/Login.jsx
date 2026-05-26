@@ -38,8 +38,8 @@ export default function Login() {
         <main className="login-card">
             <section className="card stack">
                 <div>
-                    <h1 style={{ margin: 0 }}>Live Test System</h1>
-                    <p className="subtitle">Sign in with your role account.</p>
+                    <h1 style={{ margin: 0 }}>TBL Test System</h1>
+                    <p className="subtitle">Sign in with your account.</p>
                 </div>
 
                 <div className="segmented" aria-label="Role">

@@ -16,6 +16,12 @@ const questionSchema = new mongoose.Schema({
 }, { _id: false });
 
 const testSchema = new mongoose.Schema({
+    name: {
+        type: String,
+        required: true,
+        trim: true,
+        default: 'Untitled Test'
+    },
     status: {
         type: String,
         enum: ['draft', 'published', 'closed'],

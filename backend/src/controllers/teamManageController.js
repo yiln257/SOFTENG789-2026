@@ -2,6 +2,7 @@ import User from '../models/User.js';
 import Team from '../models/Team.js';
 import xlsx from 'xlsx';
 import crypto from 'crypto';
+import { sendPasswordEmail } from '../services/emailService.js';
 
 const normalizeUPI = (upi) => upi?.toString().trim().toLowerCase();
 const generatePassword = () => crypto.randomBytes(6).toString('base64url').slice(0, 8);
@@ -102,23 +103,57 @@ export const getStudents = async (req, res) => {
     }
 };
 
-export const printStudentPasswords = async (req, res) => {
+export const clearStudents = async (req, res) => {
+    try {
+        const [deleteResult, teamUpdateResult] = await Promise.all([
+            User.deleteMany({ role: 'student' }),
+            Team.updateMany({ isActive: true }, { $set: { isActive: false } })
+        ]);
+
+        res.json({
+            success: true,
+            message: `Student roster cleared. Removed ${deleteResult.deletedCount} students and deactivated ${teamUpdateResult.modifiedCount || 0} active teams.`,
+            deletedCount: deleteResult.deletedCount,
+            deactivatedTeamCount: teamUpdateResult.modifiedCount || 0
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+export const sendStudentPasswords = async (req, res) => {
     try {
         const students = await User.find({ role: 'student' })
             .select('name upi email password')
             .sort({ upi: 1 })
             .lean();
 
-        console.log('========== Student login passwords ==========');
-        students.forEach((student) => {
-            console.log(`To: ${student.email} | Name: ${student.name} | UPI: ${student.upi} | Password: ${student.password}`);
-        });
-        console.log('============================================');
+        if (students.length === 0) {
+            return res.status(400).json({ success: false, message: 'No students have been imported yet.' });
+        }
+
+        const sent = [];
+        const failed = [];
+
+        for (const student of students) {
+            try {
+                await sendPasswordEmail(student);
+                sent.push(student.upi);
+            } catch (error) {
+                console.warn(`Failed to send password email to ${student.email}: ${error.message}`);
+                failed.push({
+                    upi: student.upi,
+                    email: student.email,
+                    error: error.message
+                });
+            }
+        }
 
         res.json({
-            success: true,
-            message: `Printed ${students.length} student passwords to the backend console.`,
-            count: students.length
+            success: failed.length === 0,
+            message: `Password emails sent to ${sent.length} students${failed.length ? `; ${failed.length} failed. First error: ${failed[0].error}` : '.'}`,
+            sentCount: sent.length,
+            failed
         });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
