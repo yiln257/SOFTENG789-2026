@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import request from '../../api/request';
 import { useSocket } from '../../hooks/useSocket';
+import { apiUrl } from '../../config/endpoints';
 
 const rateToNumber = (value) => Number.parseFloat((value || '0').replace('%', '')) || 0;
 
@@ -61,7 +62,7 @@ export default function TestStats() {
         try {
             const token = localStorage.getItem('token');
             const response = await axios({
-                url: `http://localhost:5000/api/tests/${testId}/export`,
+                url: apiUrl(`/tests/${testId}/export`),
                 method: 'GET',
                 responseType: 'blob',
                 headers: { Authorization: `Bearer ${token}` }

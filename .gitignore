@@ -5,10 +5,16 @@ node_modules/
 
 # 环境变量与敏感配置
 .env
+.env
+.env.production
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
+*.pem*
+*.key
+*.ppk
+id_rsa*
 
 # Docker 挂载的本地数据库持久化卷 (非常重要，防止将真实数据提交到Git)
 mongo_data/
