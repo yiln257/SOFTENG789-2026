@@ -1,57 +1,282 @@
-# 实时分组答题与测试系统 (Real-time Quiz & Testing System)
+# Digital tRAT Test System
 
-本项目是一个支持高并发（1000+ 人同时使用）的实时分组答题系统。采用前后端分离架构，核心依托 WebSocket (Socket.io) 和 Redis 缓存实现设备抢占锁、GPS 防作弊校验及状态实时同步。
+> A real-time digital team readiness assurance test system for large first-year engineering classes.
 
-## 🛠 技术栈 (Tech Stack)
+This project focuses on the digital tRAT gap in Team-Based Learning. It does not implement iRAT. The system supports teacher-controlled live questions, student-created teams, GPS check-in, team leader answer submission, immediate attempt feedback, post-test feedback, and result export.
 
-* **前端:** React 18, Vite, TailwindCSS, Socket.io-client, Axios
-* **后端:** Node.js 18, Express, Mongoose, Socket.io, Redis Client (ESM 规范)
-* **数据库:** MongoDB 6.0 (持久化存储), Redis 7.0 (高并发状态与锁)
-* **部署 & 环境:** Docker, Docker Compose, WSL2 (Ubuntu)
+## At A Glance
 
-## ✨ 核心特性 (Key Features)
+| Area | Implementation |
+| --- | --- |
+| Teaching scope | tRAT only |
+| Frontend | React 18, Vite, React Router, Axios, Socket.io Client |
+| Backend | Node.js 18, Express, Socket.io, Mongoose, JWT, Multer, XLSX |
+| Persistent storage | MongoDB 6.0 |
+| Live state | Redis 7.0 |
+| Development | Docker Compose |
+| Production | Docker Compose, Nginx, Caddy, GitHub Actions, Catalyst Cloud |
 
-* **教师端 (Teacher Portal):**
-  * 支持 1000 人名单与试题批量导入 (Excel/CSV)。
-  * 一键随机 4 人分组，并使用 BullMQ/Redis 队列平滑分发包含独立密码的邮件。
-  * 实时测验控制：发布、暂停、一键强制全员切题。
-  * 实时学情大屏：动态展示各题通过率与 Feedback 词云数据。
-* **学生端 (Student Portal):**
-  * **GPS 严格核验:** 需与教师定位距离 < 500m，误差 < 15 分钟，且同组 4 人均就位方可解锁测试。
-  * **设备抢占式答题:** 同一 Team 内采用 Redis `SETNX` 互斥锁，仅限首位点击“开始”的设备作为答题端，其余设备强制进入“观察者提示”模式。
-  * **刮刮乐答题机制:** 选中立马反馈对错，错后可继续尝试，后端阶梯计分。
+## Core Workflow
 
-## 🚀 快速启动 (Getting Started)
+```mermaid
+flowchart LR
+    A["Teacher imports roster"] --> B["Teacher imports tRAT test"]
+    B --> C["Students log in"]
+    C --> D["Students create teams"]
+    D --> E["Teacher sets GPS point"]
+    E --> F["Students check in"]
+    F --> G["Teacher publishes test"]
+    G --> H["Leader device submits team answers"]
+    H --> I["Teacher changes question"]
+    I --> H
+    I --> J["Teacher ends test"]
+    J --> K["Students submit feedback"]
+    K --> L["Teacher reviews and exports results"]
+```
 
-本项目使用 `devcontainer` 和 `docker-compose` 进行完全容器化管理，确保开发环境零配置。
+## Feature Summary
 
-### 前置要求 (Prerequisites)
-* 安装 [Docker Desktop](https://www.docker.com/products/docker-desktop/) (并开启 WSL2 集成)
-* 安装 VSCode 及其扩展 `Dev Containers`
+### Teacher Portal
 
-### 运行步骤
-1. 克隆本项目并进入根目录 `SOFTENG789-2026/`。
-2. 复制 `.env` 模板文件：
-   在 `backend/` 目录下创建 `.env` 文件，填入所需配置（参考内部提供的注释说明）。
-3. 使用 VSCode 打开项目文件夹。
-4. 按下 `Ctrl + Shift + P`，输入 `Dev Containers: Reopen in Container`。
-5. 等待镜像构建完成。此时，前端、后端、MongoDB 和 Redis 均已在容器内启动。
-   * **前端:** `http://localhost:3000`
-   * **后端 API Health Check:** `http://localhost:5000/api/health`
+| Feature | Current behaviour |
+| --- | --- |
+| Teacher login | Uses account and password from environment variables |
+| Classroom GPS | Saves teacher browser GPS point to Redis with a timestamp |
+| Roster import | Accepts Excel or CSV files with `Name` and `UPI` columns |
+| Student accounts | Generates student emails as `UPI@aucklanduni.ac.nz` |
+| Passwords | Generates passwords and keeps existing passwords for unchanged UPIs |
+| Email delivery | Sends password emails through configured SMTP settings |
+| Test import | Accepts Excel or CSV files with `Seq`, `OptionA`, `OptionB`, `OptionC`, `OptionD`, and `CorrectAnswer` |
+| Live control | Publishes one test, moves all teams to the next question, and closes the test at the end |
+| Reporting | Shows check-in counts, team scores, question performance, and feedback |
+| Export | Downloads student results as an `.xlsx` file |
 
-## 📁 目录结构 (Directory Structure)
+### Student Portal
 
-├── .devcontainer/     # VSCode 容器配置
-├── backend/           # Node.js + Express + WebSocket 服务端
-│   ├── src/
-│   │   ├── config/    # DB 与 Redis 连接配置
-│   │   ├── models/    # Mongoose 数据库模型 (User, Team, Test, Result)
-│   │   └── services/  # 抽象业务层 (Redis Key 封装管理)
-│   ├── Dockerfile
-│   └── package.json
-├── frontend/          # React + Vite 前端客户端
-│   ├── src/
-│   ├── Dockerfile
-│   └── package.json
-├── docker-compose.yml # 容器编排文件
-└── README.md
+| Feature | Current behaviour |
+| --- | --- |
+| Student login | Uses UPI and generated password |
+| Team creation | One student enters 2 or 3 teammates' UPIs and passwords |
+| Team size | 3 or 4 students including the creator |
+| Team leader | The team creator becomes the leader |
+| GPS check-in | Passes when the student is within 500 metres of the teacher GPS point |
+| GPS expiry | Teacher GPS point expires after 15 minutes |
+| Live answering | Only the team leader device can submit answers |
+| Member devices | Show a message telling students to share the leader device |
+| Attempts | Teams get up to 3 attempts per question |
+| Scoring | 3 points on first try, 2 points on second try, 1 point on third try |
+| Feedback | Open for 10 minutes after the test closes |
+
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph Browser["Browser"]
+        React["React SPA"]
+    end
+
+    subgraph Backend["Node.js Backend"]
+        Express["Express REST API"]
+        Socket["Socket.io Server"]
+        Controllers["Controllers"]
+    end
+
+    subgraph Data["Data Services"]
+        Mongo["MongoDB"]
+        Redis["Redis"]
+    end
+
+    React -- "REST /api" --> Express
+    React -- "Socket.io" --> Socket
+    Express --> Controllers
+    Socket --> Controllers
+    Controllers -- "persistent records" --> Mongo
+    Controllers -- "GPS and attempt counters" --> Redis
+```
+
+The frontend is a React single-page application. It handles pages, navigation, local UI state, and user interaction. It does not decide answer correctness or scores.
+
+The backend is the source of truth. It handles authentication, imports, team creation, GPS check-in, question delivery, answer marking, scoring, feedback, statistics, and export.
+
+Socket.io is used for live notification. Detailed state is still fetched through REST APIs, so the backend remains the authority for the current test state.
+
+## Data Model
+
+| Model | Purpose | Main fields |
+| --- | --- | --- |
+| `User` | Teacher and student accounts | `role`, `upi`, `name`, `email`, `password`, `teamId` |
+| `Team` | Active or historical team records | `teamName`, `testId`, `leaderId`, `members`, `isActive` |
+| `Test` | tRAT test definition and state | `name`, `status`, `scoringRules`, `questions`, `currentQuestionSeq`, `feedbackOpenUntil` |
+| `CheckIn` | Student GPS result for a test | `testId`, `studentId`, `status`, `distanceMeters`, `checkedAt` |
+| `Result` | Team score, answers, attendance, and feedback | `testId`, `teamId`, `activeStudentId`, `totalScore`, `answers`, `feedback`, `presentMembers` |
+
+Redis stores short-lived live state:
+
+| Redis key | Purpose |
+| --- | --- |
+| `teacher:gps` | Teacher latitude, longitude, and timestamp |
+| `test:<testId>:team:<teamId>:q:<seq>:attempts` | Attempt count for one team on one question |
+
+## API Overview
+
+### Authentication
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/auth/teacher/login` | Teacher login |
+| `POST` | `/api/auth/student/login` | Student login |
+
+### Teacher
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/teacher/gps` | Save classroom GPS point |
+| `GET` | `/api/teams/students` | List imported students |
+| `POST` | `/api/teams/import` | Import student roster |
+| `DELETE` | `/api/teams/students` | Clear student roster |
+| `POST` | `/api/teams/send-password-emails` | Email student passwords |
+| `POST` | `/api/tests/import` | Import tRAT test |
+| `GET` | `/api/tests` | List tests |
+| `GET` | `/api/tests/:testId` | Get test detail |
+| `POST` | `/api/tests/:testId/publish` | Publish test |
+| `POST` | `/api/tests/:testId/next` | Move to next question or end test |
+| `POST` | `/api/tests/:testId/close` | Close test |
+| `GET` | `/api/tests/:testId/statistics` | Get statistics |
+| `GET` | `/api/tests/:testId/export` | Export results |
+| `DELETE` | `/api/tests/:testId` | Delete draft or closed test |
+
+### Student
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/student/lobby` | Get lobby, team, check-in, live test, and feedback state |
+| `GET` | `/api/student/team-info` | Get active team |
+| `POST` | `/api/student/team` | Create team |
+| `POST` | `/api/student/ready` | GPS check-in |
+| `GET` | `/api/student/question` | Get current team question |
+| `POST` | `/api/student/answer` | Submit answer attempt |
+| `POST` | `/api/student/feedback` | Submit post-test feedback |
+
+## Socket Events
+
+### Client Join Events
+
+| Event | Purpose |
+| --- | --- |
+| `teacher_join` | Join `teacher_room` |
+| `join_user` | Join `user_<studentId>` |
+| `join_team` | Join `team_<teamId>` |
+| `JOIN_TEAM_ROOM` | Alternate team-room join event |
+
+### Server Broadcast Events
+
+| Event | Purpose |
+| --- | --- |
+| `TEAM_UPDATED` | Team was created or updated |
+| `TEST_STARTED` | Teacher published a test |
+| `CHANGE_QUESTION` | Teacher moved the class to the next question |
+| `TEST_ENDED` | Test was closed |
+| `NEW_FEEDBACK_RECEIVED` | Teacher received new student feedback |
+
+## Local Development
+
+Create `backend/.env` first:
+
+```env
+PORT=5000
+MONGO_URI=mongodb://mongo:27017/test_system
+REDIS_URL=redis://redis:6379
+JWT_SECRET=replace-with-a-long-random-secret
+
+TEACHER_EMAIL=teacher@example.com
+TEACHER_PASSWORD=replace-with-teacher-password
+
+EMAIL_HOST=smtp.qq.com
+EMAIL_PORT=465
+EMAIL_SECURE=true
+EMAIL_USER=your-sender@example.com
+EMAIL_PASS=replace-with-smtp-authorization-code
+EMAIL_FROM=TBL Test System <your-sender@example.com>
+```
+
+Start the development stack:
+
+```bash
+docker compose up --build
+```
+
+Development services:
+
+| Service | URL |
+| --- | --- |
+| Frontend | `http://localhost:5173` |
+| Backend health check | `http://localhost:5000/api/ping` |
+| MongoDB | `localhost:27017` |
+| Redis | `localhost:6379` |
+
+## Production Deployment
+
+Production uses `docker-compose.prod.yml`.
+
+| Service | Role |
+| --- | --- |
+| `caddy` | Public entry point, HTTPS, compression, reverse proxy |
+| `frontend` | Vite build served by Nginx |
+| `backend` | Express and Socket.io server |
+| `mongo` | Persistent database |
+| `redis` | Live state store |
+
+Caddy proxies:
+
+| Public path | Target |
+| --- | --- |
+| `/api/*` | `backend:5000` |
+| `/socket.io/*` | `backend:5000` |
+| all other paths | `frontend:80` |
+
+GitHub Actions can deploy to Catalyst Cloud. The workflow uploads a release over SSH and runs `scripts/deploy-on-server.sh`. More details are in `docs/catalyst-github-actions-deploy.md`.
+
+## Project Structure
+
+```text
+.
+├── backend
+│   ├── index.js
+│   └── src
+│       ├── config
+│       ├── controllers
+│       ├── middlewares
+│       ├── models
+│       ├── routes
+│       ├── services
+│       ├── sockets
+│       └── utils
+├── frontend
+│   ├── index.html
+│   ├── nginx.conf
+│   └── src
+│       ├── api
+│       ├── components
+│       ├── config
+│       ├── context
+│       ├── hooks
+│       └── pages
+├── docs
+├── scripts
+├── docker-compose.yml
+└── docker-compose.prod.yml
+```
+
+## Current Scope
+
+This project implements the team test part of TBL. It is a tRAT-focused system.
+
+Not included in the current implementation:
+
+- iRAT module
+- automatic random grouping
+- CATME-style team optimisation
+- BullMQ email queue
+- separate device takeover lock flow
+
+The current answer authority is based on the team leader device.
