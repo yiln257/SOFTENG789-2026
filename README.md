@@ -14,7 +14,7 @@ This project focuses on the digital tRAT gap in Team-Based Learning. It does not
 | Persistent storage | MongoDB 6.0 |
 | Live state | Redis 7.0 |
 | Development | Docker Compose |
-| Production | Docker Compose, Nginx, Caddy, GitHub Actions, Catalyst Cloud |
+| Production | Docker Compose, Nginx, Caddy |
 
 ## Core Workflow
 
@@ -234,7 +234,14 @@ Caddy proxies:
 | `/socket.io/*` | `backend:5000` |
 | all other paths | `frontend:80` |
 
-GitHub Actions can deploy to Catalyst Cloud. The workflow uploads a release over SSH and runs `scripts/deploy-on-server.sh`. More details are in `docs/catalyst-github-actions-deploy.md`.
+Manual production deployment can be done on the server with Docker Compose:
+
+```bash
+docker compose -f docker-compose.prod.yml build
+docker compose -f docker-compose.prod.yml up -d --remove-orphans
+```
+
+The server must provide a production environment file with values such as `JWT_SECRET`, `APP_HOST`, teacher credentials, and email settings.
 
 ## Project Structure
 
@@ -261,7 +268,6 @@ GitHub Actions can deploy to Catalyst Cloud. The workflow uploads a release over
 │       ├── context
 │       ├── hooks
 │       └── pages
-├── docs
 ├── scripts
 ├── docker-compose.yml
 └── docker-compose.prod.yml
@@ -270,13 +276,4 @@ GitHub Actions can deploy to Catalyst Cloud. The workflow uploads a release over
 ## Current Scope
 
 This project implements the team test part of TBL. It is a tRAT-focused system.
-
-Not included in the current implementation:
-
-- iRAT module
-- automatic random grouping
-- CATME-style team optimisation
-- BullMQ email queue
-- separate device takeover lock flow
-
 The current answer authority is based on the team leader device.
