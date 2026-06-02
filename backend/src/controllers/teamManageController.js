@@ -6,6 +6,24 @@ import { sendPasswordEmail } from '../services/emailService.js';
 
 const normalizeUPI = (upi) => upi?.toString().trim().toLowerCase();
 const generatePassword = () => crypto.randomBytes(6).toString('base64url').slice(0, 8);
+const normalizeHeader = (value) => value.toString().replace(/\s+/g, '').toLowerCase();
+
+const getCell = (row, keys, fallback = '') => {
+    for (const key of keys) {
+        if (row[key] !== undefined && row[key] !== null) return row[key];
+    }
+
+    const normalizedRow = new Map(
+        Object.entries(row).map(([key, value]) => [normalizeHeader(key), value])
+    );
+
+    for (const key of keys) {
+        const value = normalizedRow.get(normalizeHeader(key));
+        if (value !== undefined && value !== null) return value;
+    }
+
+    return fallback;
+};
 
 export const importStudents = async (req, res) => {
     try {
@@ -25,8 +43,8 @@ export const importStudents = async (req, res) => {
         const seenUpis = new Set();
 
         for (const row of studentsData) {
-            const upi = normalizeUPI(row.UPI || row.upi);
-            const name = row.Name || row.name;
+            const upi = normalizeUPI(getCell(row, ['UPI']));
+            const name = getCell(row, ['Name']);
 
             if (!upi || !name) continue;
             if (seenUpis.has(upi)) continue;

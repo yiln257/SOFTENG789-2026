@@ -8,10 +8,22 @@ import xlsx from 'xlsx';
 const FEEDBACK_WINDOW_MS = 10 * 60 * 1000;
 const PRE_TEST_CHECK_IN_TTL_MS = 15 * 60 * 1000;
 
+const normalizeHeader = (value) => value.toString().replace(/\s+/g, '').toLowerCase();
+
 const getCell = (row, keys, fallback = '') => {
     for (const key of keys) {
         if (row[key] !== undefined && row[key] !== null) return row[key];
     }
+
+    const normalizedRow = new Map(
+        Object.entries(row).map(([key, value]) => [normalizeHeader(key), value])
+    );
+
+    for (const key of keys) {
+        const value = normalizedRow.get(normalizeHeader(key));
+        if (value !== undefined && value !== null) return value;
+    }
+
     return fallback;
 };
 
