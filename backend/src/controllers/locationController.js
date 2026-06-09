@@ -8,6 +8,10 @@ export const updateTeacherGPS = async (req, res) => {
         }
 
         await redisService.setTeacherGPS(lat, lng);
+        req.app.get('io')?.emit('TEACHER_GPS_UPDATED', {
+            status: 'ready',
+            updatedAt: new Date()
+        });
         res.json({ success: true, message: 'Classroom GPS point updated.' });
     } catch (error) {
         console.error('Failed to write teacher GPS:', error);

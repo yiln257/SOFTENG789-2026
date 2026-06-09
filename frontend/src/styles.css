@@ -78,6 +78,31 @@ button {
     grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.student-dashboard-steps {
+    grid-template-columns: 1fr;
+}
+
+.student-dashboard-steps .teammate-fields {
+    align-items: stretch;
+    flex-direction: column;
+}
+
+.student-dashboard-steps .teammate-fields .field {
+    max-width: 180px;
+}
+
+.student-dashboard-steps .step-action-button {
+    align-self: flex-start;
+    width: auto;
+}
+
+.student-dashboard-steps .teammate-stepper-button {
+    width: 40px;
+    min-width: 40px;
+    height: 40px;
+    padding: 0;
+}
+
 .card {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -496,6 +521,11 @@ button {
 
 .option-btn:hover:not(:disabled) {
     background: var(--surface-soft);
+}
+
+.option-btn.readonly-option:disabled {
+    cursor: default;
+    opacity: 1;
 }
 
 .option-btn.correct {

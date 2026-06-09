@@ -153,6 +153,13 @@ export default function StudentLiveTest() {
         );
     };
 
+    const renderReadOnlyOption = ([key, value]) => (
+        <button key={key} className="btn option-btn readonly-option" type="button" disabled>
+            <span className="option-letter">{key}</span>
+            <span>{value}</span>
+        </button>
+    );
+
     if (loading) {
         return <main className="app-shell">Loading test...</main>;
     }
@@ -163,6 +170,11 @@ export default function StudentLiveTest() {
                 <div>
                     <h1>Question {currentSeq}</h1>
                     <p className="subtitle">Question {currentSeq} of {totalQuestions}</p>
+                    <p className="muted">
+                        {isOperator
+                            ? 'Leader device can submit answers for the team.'
+                            : 'Member devices are read-only.'}
+                    </p>
                 </div>
                 <span className={isOperator ? 'badge success' : 'badge'}>{isOperator ? 'Leader Device' : 'Member Device'}</span>
             </header>
@@ -173,9 +185,8 @@ export default function StudentLiveTest() {
                 </div>
 
                 {!isOperator ? (
-                    <div className="panel">
-                        <h2>Test Started</h2>
-                        <p className="muted">Please share the team leader device to answer.</p>
+                    <div className="option-grid">
+                        {Object.entries(options).map(renderReadOnlyOption)}
                     </div>
                 ) : (
                     <div className="stack">

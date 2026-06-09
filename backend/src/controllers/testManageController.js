@@ -34,6 +34,16 @@ const getTestNameFromFile = (file) => {
     return nameWithoutExtension || 'Untitled Test';
 };
 
+const serializeCurrentQuestion = (test) => {
+    const currentQuestion = test.questions?.find((question) => question.seq === test.currentQuestionSeq);
+    if (!currentQuestion) return null;
+
+    return {
+        seq: currentQuestion.seq,
+        options: currentQuestion.options || {}
+    };
+};
+
 const dissolveTeams = async (filter) => {
     const teams = await Team.find(filter).select('_id').lean();
     const teamIds = teams.map((team) => team._id);
@@ -259,7 +269,8 @@ export const nextQuestion = async (req, res) => {
             success: true,
             ended: false,
             currentSeq: test.currentQuestionSeq,
-            totalQuestions
+            totalQuestions,
+            currentQuestion: serializeCurrentQuestion(test)
         });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -327,6 +338,7 @@ export const getTestDetail = async (req, res) => {
                 createdAt: test.createdAt,
                 currentQuestionSeq: test.currentQuestionSeq,
                 questionCount: test.questions?.length || 0,
+                currentQuestion: serializeCurrentQuestion(test),
                 feedbackOpenUntil: test.feedbackOpenUntil
             }
         });

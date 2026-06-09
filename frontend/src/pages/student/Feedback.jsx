@@ -90,7 +90,7 @@ export default function StudentFeedback() {
                     <h1>Feedback</h1>
                     <p className="subtitle">{isOpen ? `${remainingSeconds}s remaining` : 'Closed'}</p>
                 </div>
-                <button className="btn ghost" onClick={() => navigate('/student/dashboard')}>Back to Lobby</button>
+                <button className="btn ghost" onClick={() => navigate('/student/dashboard')}>Back to Dashboard</button>
             </header>
 
             <section className="card">

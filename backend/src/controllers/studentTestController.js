@@ -9,6 +9,7 @@ import crypto from 'crypto';
 
 const CHECK_IN_RADIUS_METERS = 500;
 const PRE_TEST_CHECK_IN_TTL_MS = 15 * 60 * 1000;
+const TEACHER_GPS_TTL_MS = 15 * 60 * 1000;
 const OPTION_KEYS = ['A', 'B', 'C', 'D'];
 
 const teamPopulation = [
@@ -36,6 +37,29 @@ const serializeTest = (test) => {
         totalQuestions: test.questions?.length || 0,
         feedbackOpenUntil: test.feedbackOpenUntil || null
     };
+};
+
+const serializeTeacherGpsStatus = (teacherGps) => {
+    const timestamp = Number.parseInt(teacherGps?.timestamp, 10);
+    const hasPosition = Boolean(teacherGps?.lat && teacherGps?.lng);
+    const hasFreshTimestamp = Number.isFinite(timestamp) && Date.now() - timestamp <= TEACHER_GPS_TTL_MS;
+    const isReady = hasPosition && hasFreshTimestamp;
+
+    return {
+        isSet: hasPosition,
+        isReady,
+        status: isReady ? 'ready' : hasPosition ? 'expired' : 'missing',
+        updatedAt: Number.isFinite(timestamp) ? new Date(timestamp) : null
+    };
+};
+
+const getTeacherGpsForLobby = async () => {
+    try {
+        return await redisService.getTeacherGPS();
+    } catch (error) {
+        console.warn('Unable to read teacher GPS for lobby:', error.message);
+        return null;
+    }
 };
 
 const serializeTeam = (team, studentId) => {
@@ -111,14 +135,15 @@ export const getLobbyStatus = async (req, res) => {
     const studentId = req.user.id;
 
     try {
-        const [student, activeTest, feedbackTest] = await Promise.all([
+        const [student, activeTest, feedbackTest, teacherGps] = await Promise.all([
             User.findById(studentId).populate({
                 path: 'teamId',
                 match: { isActive: true },
                 populate: teamPopulation
             }),
             getActivePublishedTest(),
-            getOpenFeedbackTest()
+            getOpenFeedbackTest(),
+            getTeacherGpsForLobby()
         ]);
 
         if (!student) {
@@ -147,6 +172,7 @@ export const getLobbyStatus = async (req, res) => {
         return res.json({
             success: true,
             activeTest: serializeTest(activeTest),
+            teacherGps: serializeTeacherGpsStatus(teacherGps),
             team: serializeTeam(student.teamId, studentId),
             checkIn: checkIn
                 ? {
@@ -186,12 +212,12 @@ export const checkLocationAndReady = async (req, res) => {
 
     try {
         const teacherGps = await redisService.getTeacherGPS();
-        if (!teacherGps || !teacherGps.lat) {
+        if (!teacherGps?.lat || !teacherGps?.lng) {
             return res.status(400).json({ success: false, message: 'The teacher has not set the classroom GPS point yet.' });
         }
 
         const timeDiff = Date.now() - parseInt(teacherGps.timestamp, 10);
-        if (timeDiff > 900000) {
+        if (timeDiff > TEACHER_GPS_TTL_MS) {
             return res.status(400).json({ success: false, message: 'The teacher GPS point has expired. Please ask the teacher to refresh it.' });
         }
 

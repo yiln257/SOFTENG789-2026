@@ -42,7 +42,8 @@ export default function TeacherLiveControl() {
             setTest((current) => ({
                 ...current,
                 currentQuestionSeq: res.currentSeq,
-                questionCount: res.totalQuestions
+                questionCount: res.totalQuestions,
+                currentQuestion: res.currentQuestion
             }));
         } catch (error) {
             setMessage(error.message);
@@ -54,6 +55,15 @@ export default function TeacherLiveControl() {
     if (!test) {
         return <main className="app-shell narrow">Loading control panel...</main>;
     }
+
+    const options = test.currentQuestion?.options || {};
+
+    const renderReadOnlyOption = ([key, value]) => (
+        <button key={key} className="btn option-btn readonly-option" type="button" disabled>
+            <span className="option-letter">{key}</span>
+            <span>{value}</span>
+        </button>
+    );
 
     return (
         <main className="app-shell narrow">
@@ -69,6 +79,12 @@ export default function TeacherLiveControl() {
                 <div className="progress" aria-label="Question progress">
                     <span style={{ width: `${progress}%` }} />
                 </div>
+
+                {Object.keys(options).length > 0 && (
+                    <div className="option-grid">
+                        {Object.entries(options).map(renderReadOnlyOption)}
+                    </div>
+                )}
 
                 <button className="btn" onClick={handleNextQuestion} disabled={loading || test.status !== 'published'}>
                     {isFinalQuestion ? 'End Test' : 'Next Question'}

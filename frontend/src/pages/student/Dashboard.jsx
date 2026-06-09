@@ -15,9 +15,7 @@ export default function StudentDashboard() {
 
     const [lobby, setLobby] = useState(null);
     const [loading, setLoading] = useState(true);
-    const [statusMsg, setStatusMsg] = useState('');
     const [teamMsg, setTeamMsg] = useState('');
-    const [startMsg, setStartMsg] = useState('');
     const [creatingTeam, setCreatingTeam] = useState(false);
     const [teammates, setTeammates] = useState([emptyMate(), emptyMate()]);
 
@@ -32,7 +30,7 @@ export default function StudentDashboard() {
                 });
             }
         } catch (error) {
-            setStatusMsg(error.message);
+            console.error('Failed to load student lobby:', error);
         } finally {
             setLoading(false);
         }
@@ -49,11 +47,13 @@ export default function StudentDashboard() {
         socket.on('TEAM_UPDATED', refresh);
         socket.on('TEST_STARTED', refresh);
         socket.on('TEST_ENDED', refresh);
+        socket.on('TEACHER_GPS_UPDATED', refresh);
 
         return () => {
             socket.off('TEAM_UPDATED', refresh);
             socket.off('TEST_STARTED', refresh);
             socket.off('TEST_ENDED', refresh);
+            socket.off('TEACHER_GPS_UPDATED', refresh);
         };
     }, [socket]);
 
@@ -70,19 +70,29 @@ export default function StudentDashboard() {
         return <span className="badge danger">Failed</span>;
     }, [lobby]);
 
+    const teacherGpsMessage = useMemo(() => {
+        if (lobby?.teacherGps?.status === 'ready') {
+            return 'The teacher has set the classroom GPS point. You can check in now.';
+        }
+
+        if (lobby?.teacherGps?.status === 'expired') {
+            return 'The classroom GPS point has expired. Please wait for the teacher to refresh it before checking in.';
+        }
+
+        return 'The teacher has not set the classroom GPS point yet. Please wait before checking in.';
+    }, [lobby?.teacherGps?.status]);
+
     const handleCheckIn = async () => {
-        setStatusMsg('');
         try {
             const pos = await getPosition();
-            const res = await request.post('/student/ready', {
+            await request.post('/student/ready', {
                 lat: pos.lat,
                 lng: pos.lng
             });
 
-            setStatusMsg(res.message);
             await fetchLobby();
-        } catch (error) {
-            setStatusMsg(error.message);
+        } catch {
+            await fetchLobby();
         }
     };
 
@@ -114,20 +124,11 @@ export default function StudentDashboard() {
     };
 
     const handleStartTest = () => {
-        setStartMsg('');
-
         if (!lobby?.activeTest) {
-            setStartMsg('Waiting for the teacher to publish the test.');
             return;
         }
 
         if (!lobby?.team) {
-            setStartMsg('The test has been published. Please finish teaming first.');
-            return;
-        }
-
-        if (!lobby.team.isLeader) {
-            setStartMsg('The test has started. Please share the team leader device to answer.');
             return;
         }
 
@@ -135,6 +136,19 @@ export default function StudentDashboard() {
     };
 
     const feedbackEnabled = lobby?.feedback?.available && !lobby?.feedback?.submitted;
+    const canStartTeamTest = Boolean(lobby?.team && lobby?.activeTest);
+    const hasCheckedIn = lobby?.checkIn?.status === 'passed';
+    const teamTestMessage = useMemo(() => {
+        if (lobby?.activeTest && !lobby?.team) {
+            return 'The teacher has published the test. Please complete team creation before starting.';
+        }
+
+        if (lobby?.activeTest) {
+            return 'The teacher has published the test. You can start now.';
+        }
+
+        return 'The teacher has not published the test yet. Please wait.';
+    }, [lobby?.activeTest, lobby?.team]);
 
     if (loading) {
         return <main className="app-shell">Loading lobby...</main>;
@@ -150,31 +164,31 @@ export default function StudentDashboard() {
                 <button className="btn ghost" onClick={logout}>Sign Out</button>
             </header>
 
-            <section className="grid">
+            <section className="grid student-dashboard-steps">
                 <article className="card stack">
                     <div className="row">
-                        <h2>Check-in</h2>
+                        <h2>Step 1: Check-in</h2>
                         <div className="spacer" />
                         {checkInBadge}
                     </div>
-                    <p className="muted">
-                        {lobby?.activeTest
-                            ? `Live test: ${lobby.activeTest.currentSeq} of ${lobby.activeTest.totalQuestions}`
-                            : 'No live test has been published yet.'}
-                    </p>
-                    <button className="btn" onClick={handleCheckIn} disabled={isLocating}>
-                        {isLocating ? 'Getting GPS...' : 'Check In with GPS'}
+                    <p className="muted">{teacherGpsMessage}</p>
+                    <button
+                        className="btn step-action-button"
+                        onClick={handleCheckIn}
+                        disabled={hasCheckedIn || isLocating || !lobby?.teacherGps?.isReady}
+                    >
+                        Check In with GPS
                     </button>
                     {geoError && <div className="error">{geoError}</div>}
-                    {statusMsg && <p className="status-text">{statusMsg}</p>}
                 </article>
 
                 <article className="card stack">
                     <div className="row">
-                        <h2>Team</h2>
+                        <h2>Step 2: Team Creation</h2>
                         <div className="spacer" />
                         <span className={lobby?.team ? 'badge success' : 'badge'}>{lobby?.team ? 'Ready' : 'Open'}</span>
                     </div>
+                    <p className="muted">Choose one device as your team's leader device to enter the teammates' details below. Each member should enter their own password to keep it private.</p>
 
                     {lobby?.team ? (
                         <div className="stack">
@@ -200,14 +214,11 @@ export default function StudentDashboard() {
                                     })}
                                 </tbody>
                             </table>
-                            {!lobby.team.isLeader && (
-                                <p className="muted">Your team has been created. Teaming is locked for this test.</p>
-                            )}
                         </div>
                     ) : (
                         <form className="stack" onSubmit={handleCreateTeam}>
                             {teammates.map((mate, index) => (
-                                <div className="row" key={index}>
+                                <div className="row teammate-fields" key={index}>
                                     <input
                                         className="field"
                                         placeholder={`Teammate ${index + 1} UPI`}
@@ -227,52 +238,53 @@ export default function StudentDashboard() {
                             ))}
                             <div className="row wrap">
                                 <button
-                                    className="btn secondary"
+                                    className="btn secondary teammate-stepper-button"
                                     type="button"
+                                    aria-label="Add teammate"
                                     disabled={teammates.length >= 3}
                                     onClick={() => setTeammates((current) => [...current, emptyMate()])}
                                 >
-                                    Add
+                                    +
                                 </button>
                                 <button
-                                    className="btn ghost"
+                                    className="btn ghost teammate-stepper-button"
                                     type="button"
+                                    aria-label="Remove teammate"
                                     disabled={teammates.length <= 2}
                                     onClick={() => setTeammates((current) => current.slice(0, -1))}
                                 >
-                                    Remove
+                                    -
                                 </button>
                                 <button className="btn" type="submit" disabled={creatingTeam}>
                                     {creatingTeam ? 'Creating...' : 'Create Team'}
                                 </button>
                             </div>
-                            {teamMsg && <p className="status-text">{teamMsg}</p>}
+                            {teamMsg && <div className="error">{teamMsg}</div>}
                         </form>
                     )}
                 </article>
 
                 <article className="card stack">
                     <div className="row">
-                        <h2>Start Test</h2>
+                        <h2>Step 3: Team Test</h2>
                         <div className="spacer" />
                         <span className={lobby?.activeTest ? 'badge success' : 'badge warning'}>
                             {lobby?.activeTest ? 'Published' : 'Waiting'}
                         </span>
                     </div>
-                    <p className="muted">
-                        {lobby?.team?.isLeader
-                            ? 'Leader device'
-                            : lobby?.team
-                                ? 'Member device'
-                                : 'No team yet'}
-                    </p>
-                    <button className="btn" onClick={handleStartTest}>Start Test</button>
-                    {startMsg && <p className="status-text">{startMsg}</p>}
+                    <p className="muted">{teamTestMessage}</p>
+                    <button
+                        className="btn step-action-button"
+                        onClick={handleStartTest}
+                        disabled={!canStartTeamTest}
+                    >
+                        Start Team Test
+                    </button>
                 </article>
 
                 <article className="card stack">
                     <div className="row">
-                        <h2>Feedback</h2>
+                        <h2>Step 4: Feedback</h2>
                         <div className="spacer" />
                         <span className={feedbackEnabled ? 'badge success' : 'badge'}>
                             {lobby?.feedback?.submitted ? 'Submitted' : feedbackEnabled ? 'Open' : 'Locked'}
@@ -286,7 +298,7 @@ export default function StudentDashboard() {
                                 : 'Available for 10 minutes after a completed test.'}
                     </p>
                     <button
-                        className="btn"
+                        className="btn step-action-button"
                         disabled={!feedbackEnabled}
                         onClick={() => navigate(`/student/feedback/${lobby.feedback.testId}`)}
                     >

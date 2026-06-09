@@ -21,7 +21,10 @@ request.interceptors.response.use(
     (response) => response.data,
     (error) => {
         if (error.response) {
-            if (error.response.status === 401) {
+            const requestUrl = error.config?.url || '';
+            const isAuthLoginRequest = requestUrl.includes('/auth/student/login') || requestUrl.includes('/auth/teacher/login');
+
+            if (error.response.status === 401 && !isAuthLoginRequest) {
                 localStorage.removeItem('token');
                 localStorage.removeItem('user');
                 window.location.href = '/login';

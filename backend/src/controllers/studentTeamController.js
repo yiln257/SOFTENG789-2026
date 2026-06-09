@@ -144,7 +144,7 @@ export const createTeam = async (req, res) => {
                 return res.status(404).json({ success: false, message: `No student was found for UPI ${mate.upi}.` });
             }
             if (student.password !== mate.password) {
-                return res.status(401).json({ success: false, message: `Password is incorrect for UPI ${mate.upi}.` });
+                return res.status(400).json({ success: false, message: `Password is incorrect for UPI ${mate.upi}.` });
             }
             if (student.teamId) {
                 return res.status(409).json({ success: false, message: `${student.name} is already in a team.` });
