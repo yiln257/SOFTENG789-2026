@@ -20,6 +20,10 @@ request.interceptors.request.use(
 request.interceptors.response.use(
     (response) => response.data,
     (error) => {
+        if (error.code === 'ECONNABORTED') {
+            return Promise.reject(new Error('Request timed out. The server may still be processing the operation.'));
+        }
+
         if (error.response) {
             const requestUrl = error.config?.url || '';
             const isAuthLoginRequest = requestUrl.includes('/auth/student/login') || requestUrl.includes('/auth/teacher/login');

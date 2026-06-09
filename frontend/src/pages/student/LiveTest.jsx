@@ -110,18 +110,17 @@ export default function StudentLiveTest() {
                 if (res.isCorrect) {
                     setOptionStates((prev) => ({ ...prev, [selectedOption]: 'correct' }));
                     setIsLocked(true);
-                    setMessage(`Correct. Score earned: ${res.scoreEarned}.`);
-                } else if (res.isExhausted && res.correctAnswer) {
+                    setMessage(`Correct. Score earned: ${res.scoreEarned}. Wait for the next question.`);
+                } else if (res.isExhausted) {
                     setIsLocked(true);
                     setOptionStates((prev) => ({
                         ...prev,
-                        [selectedOption]: 'wrong',
-                        [res.correctAnswer]: 'correct'
+                        [selectedOption]: 'wrong'
                     }));
-                    setMessage(`No attempts left. Correct answer: ${res.correctAnswer}`);
+                    setMessage('No attempts left. Wait for the next question.');
                 } else {
                     setOptionStates((prev) => ({ ...prev, [selectedOption]: 'wrong' }));
-                    setMessage(`Incorrect. Attempts used: ${res.attempts}`);
+                    setMessage('Incorrect. Please try again.');
                 }
             }
         } catch (error) {
@@ -197,8 +196,11 @@ export default function StudentLiveTest() {
                     </div>
                 )}
 
-                {isLocked && <div className="success">This question is finalized. Wait for the next question.</div>}
-                {message && <div className={message.startsWith('Correct') ? 'success' : 'status-text'}>{message}</div>}
+                {message && (
+                    <div className={message.startsWith('Correct') ? 'success' : message.startsWith('Incorrect') || message.startsWith('No attempts') ? 'error' : 'status-text'}>
+                        {message}
+                    </div>
+                )}
             </div>
         </main>
     );

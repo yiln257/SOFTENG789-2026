@@ -207,6 +207,7 @@ export const publishTest = async (req, res) => {
             {
                 status: 'published',
                 currentQuestionSeq: 1,
+                scoringRules: { firstTry: 3, secondTry: 2, thirdTry: 1 },
                 feedbackOpenUntil: null
             },
             { new: true }
@@ -216,7 +217,19 @@ export const publishTest = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Test not found.' });
         }
 
-        await Team.updateMany({ isActive: true, testId: null }, { $set: { testId: test._id } });
+        await Team.updateMany(
+            {
+                isActive: true,
+                testId: null,
+                $expr: {
+                    $and: [
+                        { $gte: [{ $size: '$members' }, 3] },
+                        { $lte: [{ $size: '$members' }, 4] }
+                    ]
+                }
+            },
+            { $set: { testId: test._id } }
+        );
         await applyPreTestCheckIns(test._id);
         await syncPresentMembersForActiveTeams(test._id);
 

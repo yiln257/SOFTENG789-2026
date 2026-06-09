@@ -91,6 +91,30 @@ button {
     max-width: 180px;
 }
 
+.student-dashboard-steps .team-id-form {
+    align-items: center;
+    gap: 10px;
+}
+
+.student-dashboard-steps .team-id-input {
+    max-width: 140px;
+}
+
+.student-dashboard-steps .team-id-create-button {
+    margin-left: auto;
+}
+
+.team-id-panel {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.team-id-panel strong {
+    font-size: 24px;
+    letter-spacing: 0;
+}
+
 .student-dashboard-steps .step-action-button {
     align-self: flex-start;
     width: auto;
@@ -535,8 +559,9 @@ button {
 }
 
 .option-btn.wrong {
-    background: #f1f5f9;
-    color: #94a3b8;
+    background: #fee2e2;
+    border-color: #fca5a5;
+    color: #991b1b;
 }
 
 .option-letter {

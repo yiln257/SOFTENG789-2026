@@ -10,6 +10,8 @@ import crypto from 'crypto';
 const CHECK_IN_RADIUS_METERS = 500;
 const PRE_TEST_CHECK_IN_TTL_MS = 15 * 60 * 1000;
 const TEACHER_GPS_TTL_MS = 15 * 60 * 1000;
+const TEAM_MIN_SIZE = 3;
+const TEAM_MAX_SIZE = 4;
 const OPTION_KEYS = ['A', 'B', 'C', 'D'];
 
 const teamPopulation = [
@@ -66,8 +68,11 @@ const serializeTeam = (team, studentId) => {
     if (!team) return null;
     const doc = typeof team.toObject === 'function' ? team.toObject() : team;
     const leaderId = doc.leaderId?._id || doc.leaderId;
+    const memberCount = doc.members?.length || 0;
     return {
         ...doc,
+        memberCount,
+        isReady: memberCount >= TEAM_MIN_SIZE && memberCount <= TEAM_MAX_SIZE,
         isLeader: leaderId?.toString() === studentId.toString()
     };
 };
@@ -107,6 +112,9 @@ const getTeamQuestionOptions = (question, testId, teamId) => {
 
 const addPassedMemberToResult = async (testId, teamId, studentId) => {
     if (!testId || !teamId || !studentId) return;
+
+    const team = await Team.findById(teamId).select('members').lean();
+    if (!team || team.members.length < TEAM_MIN_SIZE || team.members.length > TEAM_MAX_SIZE) return;
 
     await Result.findOneAndUpdate(
         { testId, teamId },
@@ -337,6 +345,10 @@ export const fetchQuestionData = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Your team is no longer active.' });
         }
 
+        if (team.members.length < TEAM_MIN_SIZE || team.members.length > TEAM_MAX_SIZE) {
+            return res.status(403).json({ success: false, message: 'Your team must have 3 to 4 students before starting the test.' });
+        }
+
         const memberIds = team.members.map((member) => member._id.toString());
         if (!memberIds.includes(studentId.toString())) {
             return res.status(403).json({ success: false, message: 'You are not a member of this team.' });
@@ -383,6 +395,10 @@ export const submitAnswer = async (req, res) => {
 
         if (!team || !team.isActive) {
             return res.status(404).json({ success: false, message: 'Your team is no longer active.' });
+        }
+
+        if (team.members.length < TEAM_MIN_SIZE || team.members.length > TEAM_MAX_SIZE) {
+            return res.status(403).json({ success: false, message: 'Your team must have 3 to 4 students before submitting answers.' });
         }
 
         const leaderId = team.leaderId.toString();
@@ -449,8 +465,7 @@ export const submitAnswer = async (req, res) => {
             isCorrect,
             isExhausted,
             scoreEarned,
-            attempts,
-            correctAnswer: isExhausted ? shuffledQuestion.correctDisplayAnswer : null
+            attempts
         });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });

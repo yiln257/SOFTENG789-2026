@@ -1,9 +1,10 @@
 import mongoose from 'mongoose';
 
 const teamSchema = new mongoose.Schema({
-    teamName: {
+    teamId: {
         type: String,
-        required: true
+        trim: true,
+        match: [/^\d{8}$/, 'Team ID must be an 8-digit number.']
     },
     testId: {
         type: mongoose.Schema.Types.ObjectId,
@@ -22,9 +23,9 @@ const teamSchema = new mongoose.Schema({
         }],
         validate: [
             function (val) {
-                return val.length >= 3 && val.length <= 4;
+                return val.length >= 1 && val.length <= 4;
             },
-            'A team must contain 3 to 4 students.'
+            'A team must contain 1 to 4 students.'
         ]
     },
     isActive: {
@@ -34,6 +35,7 @@ const teamSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 teamSchema.index({ testId: 1, isActive: 1 });
+teamSchema.index({ teamId: 1 }, { unique: true, sparse: true });
 teamSchema.index({ leaderId: 1 });
 teamSchema.index({ members: 1 });
 

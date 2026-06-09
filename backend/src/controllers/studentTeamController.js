@@ -3,19 +3,30 @@ import Team from '../models/Team.js';
 import Test from '../models/Test.js';
 import Result from '../models/Result.js';
 import CheckIn from '../models/CheckIn.js';
+import crypto from 'crypto';
 
-const normalizeUPI = (upi) => upi?.toString().trim().toLowerCase();
+const TEAM_MIN_SIZE = 3;
+const TEAM_MAX_SIZE = 4;
 
 const teamPopulation = [
     { path: 'members', select: 'name upi' },
     { path: 'leaderId', select: 'name upi' }
 ];
 
+const isTeamReady = (team) => {
+    const memberCount = team?.members?.length || 0;
+    return memberCount >= TEAM_MIN_SIZE && memberCount <= TEAM_MAX_SIZE;
+};
+
 const serializeTeam = (team, studentId) => {
     if (!team) return null;
     const doc = typeof team.toObject === 'function' ? team.toObject() : team;
+    const memberCount = doc.members?.length || 0;
+
     return {
         ...doc,
+        memberCount,
+        isReady: memberCount >= TEAM_MIN_SIZE && memberCount <= TEAM_MAX_SIZE,
         isLeader: doc.leaderId?._id?.toString?.() === studentId.toString()
             || doc.leaderId?.toString?.() === studentId.toString()
     };
@@ -25,8 +36,24 @@ const getActivePublishedTest = () => {
     return Test.findOne({ status: 'published' }).sort({ createdAt: -1 });
 };
 
+const generateTeamId = () => {
+    return crypto.randomInt(0, 100000000).toString().padStart(8, '0');
+};
+
+const generateUniqueTeamId = async () => {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+        const teamId = generateTeamId();
+        const exists = await Team.exists({ teamId });
+        if (!exists) return teamId;
+    }
+
+    throw new Error('Unable to generate a unique Team ID. Please try again.');
+};
+
+const normalizeTeamId = (teamId) => teamId?.toString().trim();
+
 const createOrUpdateResultForTeam = async (testId, team) => {
-    if (!testId || !team) return;
+    if (!testId || !team || !isTeamReady(team)) return;
 
     const memberIds = team.members.map((id) => id.toString());
     const passedCheckIns = await CheckIn.find({
@@ -96,16 +123,8 @@ export const getTeamInfo = async (req, res) => {
 
 export const createTeam = async (req, res) => {
     const leaderId = req.user.id;
-    const teammates = Array.isArray(req.body.teammates) ? req.body.teammates : [];
 
     try {
-        if (teammates.length < 2 || teammates.length > 3) {
-            return res.status(400).json({
-                success: false,
-                message: 'Enter 2 or 3 teammates. Teams must contain 3 to 4 students including you.'
-            });
-        }
-
         const leader = await User.findById(leaderId);
         if (!leader) {
             return res.status(404).json({ success: false, message: 'Leader account not found.' });
@@ -114,63 +133,81 @@ export const createTeam = async (req, res) => {
             return res.status(409).json({ success: false, message: 'You are already in a team for this test.' });
         }
 
-        const normalized = teammates.map((mate) => ({
-            upi: normalizeUPI(mate.upi),
-            password: mate.password?.toString() || ''
-        }));
-
-        const teammateUpis = normalized.map((mate) => mate.upi).filter(Boolean);
-        const uniqueUpis = new Set(teammateUpis);
-
-        if (uniqueUpis.size !== teammates.length) {
-            return res.status(400).json({ success: false, message: 'Each teammate UPI must be unique.' });
-        }
-
-        if (uniqueUpis.has(leader.upi)) {
-            return res.status(400).json({ success: false, message: 'Do not include your own UPI in the teammate list.' });
-        }
-
-        const students = await User.find({
-            role: 'student',
-            upi: { $in: teammateUpis }
-        });
-
-        const studentMap = new Map(students.map((student) => [student.upi, student]));
-        const memberIds = [leader._id];
-
-        for (const mate of normalized) {
-            const student = studentMap.get(mate.upi);
-            if (!student) {
-                return res.status(404).json({ success: false, message: `No student was found for UPI ${mate.upi}.` });
-            }
-            if (student.password !== mate.password) {
-                return res.status(400).json({ success: false, message: `Password is incorrect for UPI ${mate.upi}.` });
-            }
-            if (student.teamId) {
-                return res.status(409).json({ success: false, message: `${student.name} is already in a team.` });
-            }
-            memberIds.push(student._id);
-        }
-
-        const activeTest = await getActivePublishedTest();
+        const teamId = await generateUniqueTeamId();
         const team = await Team.create({
-            teamName: `Team ${leader.upi}-${Date.now().toString().slice(-5)}`,
-            testId: activeTest?._id || null,
+            teamId,
+            testId: null,
             leaderId: leader._id,
-            members: memberIds,
+            members: [leader._id],
             isActive: true
         });
 
-        await User.updateMany({ _id: { $in: memberIds } }, { $set: { teamId: team._id } });
-        await createOrUpdateResultForTeam(activeTest?._id, team);
+        leader.teamId = team._id;
+        await leader.save();
 
         const populatedTeam = await Team.findById(team._id).populate(teamPopulation);
         emitTeamUpdate(req, populatedTeam);
 
         res.status(201).json({
             success: true,
-            message: 'Team created successfully.',
+            message: `Team ID ${teamId} created. Share it with your teammates.`,
             team: serializeTeam(populatedTeam, leaderId)
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+export const joinTeam = async (req, res) => {
+    const studentId = req.user.id;
+    const teamId = normalizeTeamId(req.body.teamId);
+
+    try {
+        if (!/^\d{8}$/.test(teamId || '')) {
+            return res.status(400).json({ success: false, message: 'Enter a valid 8-digit Team ID.' });
+        }
+
+        const student = await User.findById(studentId);
+        if (!student) {
+            return res.status(404).json({ success: false, message: 'Student account not found.' });
+        }
+        if (student.teamId) {
+            return res.status(409).json({ success: false, message: 'You are already in a team.' });
+        }
+
+        const team = await Team.findOne({ teamId, isActive: true });
+        if (!team) {
+            return res.status(404).json({ success: false, message: `No team was found for Team ID ${teamId}.` });
+        }
+
+        const memberIds = team.members.map((memberId) => memberId.toString());
+        if (memberIds.includes(studentId.toString())) {
+            return res.status(409).json({ success: false, message: 'You are already in this team.' });
+        }
+        if (memberIds.length >= TEAM_MAX_SIZE) {
+            return res.status(409).json({ success: false, message: 'This team is already full.' });
+        }
+
+        team.members.push(student._id);
+
+        const activeTest = await getActivePublishedTest();
+        if (!team.testId && activeTest && isTeamReady(team)) {
+            team.testId = activeTest._id;
+        }
+
+        await team.save();
+        student.teamId = team._id;
+        await student.save();
+
+        await createOrUpdateResultForTeam(team.testId || activeTest?._id, team);
+
+        const populatedTeam = await Team.findById(team._id).populate(teamPopulation);
+        emitTeamUpdate(req, populatedTeam);
+
+        res.json({
+            success: true,
+            message: `Joined Team ID ${teamId}.`,
+            team: serializeTeam(populatedTeam, studentId)
         });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });

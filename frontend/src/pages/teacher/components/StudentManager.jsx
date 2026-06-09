@@ -48,7 +48,7 @@ export default function StudentManager() {
         setSendingEmails(true);
         setMessage('');
         try {
-            const res = await request.post('/teams/send-password-emails');
+            const res = await request.post('/teams/send-password-emails', null, { timeout: 180000 });
             setMessage(res.message || 'Password emails sent.');
         } catch (error) {
             setMessage(error.message);

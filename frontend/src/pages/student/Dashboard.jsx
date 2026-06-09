@@ -5,8 +5,6 @@ import { useSocket } from '../../hooks/useSocket';
 import { useGeoLocation } from '../../hooks/useGeoLocation';
 import request from '../../api/request';
 
-const emptyMate = () => ({ upi: '', password: '' });
-
 export default function StudentDashboard() {
     const { user, logout, updateUser } = useAuth();
     const navigate = useNavigate();
@@ -17,7 +15,8 @@ export default function StudentDashboard() {
     const [loading, setLoading] = useState(true);
     const [teamMsg, setTeamMsg] = useState('');
     const [creatingTeam, setCreatingTeam] = useState(false);
-    const [teammates, setTeammates] = useState([emptyMate(), emptyMate()]);
+    const [joiningTeam, setJoiningTeam] = useState(false);
+    const [teamIdInput, setTeamIdInput] = useState('');
 
     const fetchLobby = async () => {
         try {
@@ -96,30 +95,37 @@ export default function StudentDashboard() {
         }
     };
 
-    const updateMate = (index, field, value) => {
-        setTeammates((current) => current.map((mate, i) => (
-            i === index ? { ...mate, [field]: value } : mate
-        )));
-    };
-
-    const handleCreateTeam = async (event) => {
-        event.preventDefault();
+    const handleCreateTeam = async () => {
         setTeamMsg('');
         setCreatingTeam(true);
 
         try {
-            const payload = teammates.map((mate) => ({
-                upi: mate.upi.trim(),
-                password: mate.password
-            }));
-            const res = await request.post('/student/team', { teammates: payload });
-            setTeamMsg(res.message || 'Team created successfully.');
+            const res = await request.post('/student/team');
+            setTeamMsg(res.message || 'Team ID created.');
             updateUser({ teamId: res.team?._id || null, team: res.team || null });
             await fetchLobby();
         } catch (error) {
             setTeamMsg(error.message);
         } finally {
             setCreatingTeam(false);
+        }
+    };
+
+    const handleJoinTeam = async (event) => {
+        event.preventDefault();
+        setTeamMsg('');
+        setJoiningTeam(true);
+
+        try {
+            const res = await request.post('/student/team/join', { teamId: teamIdInput });
+            setTeamMsg(res.message || 'Joined team.');
+            setTeamIdInput('');
+            updateUser({ teamId: res.team?._id || null, team: res.team || null });
+            await fetchLobby();
+        } catch (error) {
+            setTeamMsg(error.message);
+        } finally {
+            setJoiningTeam(false);
         }
     };
 
@@ -136,11 +142,16 @@ export default function StudentDashboard() {
     };
 
     const feedbackEnabled = lobby?.feedback?.available && !lobby?.feedback?.submitted;
-    const canStartTeamTest = Boolean(lobby?.team && lobby?.activeTest);
+    const isTeamReady = Boolean(lobby?.team?.isReady);
+    const canStartTeamTest = Boolean(isTeamReady && lobby?.activeTest);
     const hasCheckedIn = lobby?.checkIn?.status === 'passed';
     const teamTestMessage = useMemo(() => {
         if (lobby?.activeTest && !lobby?.team) {
             return 'The teacher has published the test. Please complete team creation before starting.';
+        }
+
+        if (lobby?.activeTest && !lobby?.team?.isReady) {
+            return 'The teacher has published the test. Wait until your team has 3 to 4 students before starting.';
         }
 
         if (lobby?.activeTest) {
@@ -149,6 +160,9 @@ export default function StudentDashboard() {
 
         return 'The teacher has not published the test yet. Please wait.';
     }, [lobby?.activeTest, lobby?.team]);
+
+    const teamActionBusy = creatingTeam || joiningTeam;
+    const displayTeamId = lobby?.team?.teamId || '';
 
     if (loading) {
         return <main className="app-shell">Loading lobby...</main>;
@@ -167,31 +181,22 @@ export default function StudentDashboard() {
             <section className="grid student-dashboard-steps">
                 <article className="card stack">
                     <div className="row">
-                        <h2>Step 1: Check-in</h2>
+                        <h2>Step 1: Team Creation</h2>
                         <div className="spacer" />
-                        {checkInBadge}
+                        <span className={isTeamReady ? 'badge success' : 'badge'}>
+                            {lobby?.team ? isTeamReady ? 'Ready' : 'Waiting for members' : 'Open'}
+                        </span>
                     </div>
-                    <p className="muted">{teacherGpsMessage}</p>
-                    <button
-                        className="btn step-action-button"
-                        onClick={handleCheckIn}
-                        disabled={hasCheckedIn || isLocating || !lobby?.teacherGps?.isReady}
-                    >
-                        Check In with GPS
-                    </button>
-                    {geoError && <div className="error">{geoError}</div>}
-                </article>
-
-                <article className="card stack">
-                    <div className="row">
-                        <h2>Step 2: Team Creation</h2>
-                        <div className="spacer" />
-                        <span className={lobby?.team ? 'badge success' : 'badge'}>{lobby?.team ? 'Ready' : 'Open'}</span>
-                    </div>
-                    <p className="muted">Choose one device as your team's leader device to enter the teammates' details below. Each member should enter their own password to keep it private.</p>
+                    <p className="muted">
+                        Only one device in your team needs to create the Team ID. Other members should enter the same Team ID to join. Teams must have 3-4 students.
+                    </p>
 
                     {lobby?.team ? (
                         <div className="stack">
+                            <div className="panel team-id-panel">
+                                <span className="muted">Team ID</span>
+                                <strong>{displayTeamId}</strong>
+                            </div>
                             <table className="table">
                                 <thead>
                                     <tr>
@@ -216,52 +221,49 @@ export default function StudentDashboard() {
                             </table>
                         </div>
                     ) : (
-                        <form className="stack" onSubmit={handleCreateTeam}>
-                            {teammates.map((mate, index) => (
-                                <div className="row teammate-fields" key={index}>
-                                    <input
-                                        className="field"
-                                        placeholder={`Teammate ${index + 1} UPI`}
-                                        value={mate.upi}
-                                        onChange={(event) => updateMate(index, 'upi', event.target.value)}
-                                        required
-                                    />
-                                    <input
-                                        className="field"
-                                        type="password"
-                                        placeholder="Password"
-                                        value={mate.password}
-                                        onChange={(event) => updateMate(index, 'password', event.target.value)}
-                                        required
-                                    />
-                                </div>
-                            ))}
-                            <div className="row wrap">
-                                <button
-                                    className="btn secondary teammate-stepper-button"
-                                    type="button"
-                                    aria-label="Add teammate"
-                                    disabled={teammates.length >= 3}
-                                    onClick={() => setTeammates((current) => [...current, emptyMate()])}
-                                >
-                                    +
+                        <div className="stack">
+                            <form className="row wrap team-id-form" onSubmit={handleJoinTeam}>
+                                <input
+                                    className="field team-id-input"
+                                    inputMode="numeric"
+                                    maxLength={8}
+                                    placeholder="Team ID"
+                                    value={teamIdInput}
+                                    onChange={(event) => setTeamIdInput(event.target.value.replace(/\D/g, '').slice(0, 8))}
+                                    required
+                                />
+                                <button className="btn" type="submit" disabled={teamActionBusy || teamIdInput.length !== 8}>
+                                    {joiningTeam ? 'Joining...' : 'Join Team'}
                                 </button>
                                 <button
-                                    className="btn ghost teammate-stepper-button"
+                                    className="btn team-id-create-button"
                                     type="button"
-                                    aria-label="Remove teammate"
-                                    disabled={teammates.length <= 2}
-                                    onClick={() => setTeammates((current) => current.slice(0, -1))}
+                                    disabled={teamActionBusy}
+                                    onClick={handleCreateTeam}
                                 >
-                                    -
+                                    {creatingTeam ? 'Creating...' : 'Create Team ID'}
                                 </button>
-                                <button className="btn" type="submit" disabled={creatingTeam}>
-                                    {creatingTeam ? 'Creating...' : 'Create Team'}
-                                </button>
-                            </div>
+                            </form>
                             {teamMsg && <div className="error">{teamMsg}</div>}
-                        </form>
+                        </div>
                     )}
+                </article>
+
+                <article className="card stack">
+                    <div className="row">
+                        <h2>Step 2: Check-in</h2>
+                        <div className="spacer" />
+                        {checkInBadge}
+                    </div>
+                    <p className="muted">{teacherGpsMessage}</p>
+                    <button
+                        className="btn step-action-button"
+                        onClick={handleCheckIn}
+                        disabled={hasCheckedIn || isLocating || !lobby?.teacherGps?.isReady}
+                    >
+                        Check In with GPS
+                    </button>
+                    {geoError && <div className="error">{geoError}</div>}
                 </article>
 
                 <article className="card stack">
@@ -302,7 +304,7 @@ export default function StudentDashboard() {
                         disabled={!feedbackEnabled}
                         onClick={() => navigate(`/student/feedback/${lobby.feedback.testId}`)}
                     >
-                        Open Feedback
+                        Give Teacher Feedback
                     </button>
                 </article>
             </section>

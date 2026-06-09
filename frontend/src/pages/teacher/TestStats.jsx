@@ -7,6 +7,15 @@ import { apiUrl } from '../../config/endpoints';
 
 const rateToNumber = (value) => Number.parseFloat((value || '0').replace('%', '')) || 0;
 
+const getSafeFileName = (value) => (
+    (value || 'Untitled Test')
+        .toString()
+        .trim()
+        .replace(/[\\/:*?"<>|]+/g, '_')
+        .replace(/\s+/g, '_')
+    || 'Untitled_Test'
+);
+
 export default function TestStats() {
     const { testId } = useParams();
     const navigate = useNavigate();
@@ -71,7 +80,7 @@ export default function TestStats() {
             const url = window.URL.createObjectURL(new Blob([response.data]));
             const link = document.createElement('a');
             link.href = url;
-            link.setAttribute('download', `test_results_${testId}.xlsx`);
+            link.setAttribute('download', `test_results_${getSafeFileName(stats?.test?.name)}.xlsx`);
             document.body.appendChild(link);
             link.click();
             link.remove();
@@ -165,7 +174,7 @@ export default function TestStats() {
                     <table className="table roster-table team-score-table">
                         <thead>
                             <tr>
-                                <th>Team</th>
+                                <th>Team ID</th>
                                 <th>Leader</th>
                                 <th>Members</th>
                                 <th>Score</th>
@@ -174,8 +183,8 @@ export default function TestStats() {
                         </thead>
                         <tbody>
                             {stats.teamResults.map((team) => (
-                                <tr key={team.teamId}>
-                                    <td>{team.teamName}</td>
+                                <tr key={team.teamObjectId}>
+                                    <td>{team.teamId}</td>
                                     <td>{team.leader?.name || 'N/A'}</td>
                                     <td>{team.members?.map((member) => member.upi).join(', ')}</td>
                                     <td>{team.totalScore}</td>

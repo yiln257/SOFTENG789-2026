@@ -10,6 +10,17 @@ const percent = (value, total) => {
     return `${((value / total) * 100).toFixed(2)}%`;
 };
 
+const getTeamDisplayId = (team) => team?.teamId || 'Unknown team';
+
+const getSafeFileName = (value) => {
+    return (value || 'Untitled Test')
+        .toString()
+        .trim()
+        .replace(/[\\/:*?"<>|]+/g, '_')
+        .replace(/\s+/g, '_')
+        || 'Untitled_Test';
+};
+
 export const getTestStatistics = async (req, res) => {
     const { testId } = req.params;
 
@@ -75,8 +86,8 @@ export const getTestStatistics = async (req, res) => {
 
             const team = teamMap.get(result.teamId.toString());
             return {
-                teamId: result.teamId,
-                teamName: team?.teamName || 'Unknown team',
+                teamObjectId: result.teamId,
+                teamId: getTeamDisplayId(team),
                 leader: team?.leaderId || null,
                 members: team?.members || [],
                 totalScore: result.totalScore || 0,
@@ -105,6 +116,7 @@ export const getTestStatistics = async (req, res) => {
             statistics: {
                 test: {
                     id: test._id,
+                    name: test.name || 'Untitled Test',
                     status: test.status,
                     questionCount: test.questions.length,
                     currentQuestionSeq: test.currentQuestionSeq,
@@ -162,7 +174,7 @@ export const exportTestResults = async (req, res) => {
             return {
                 Name: student.name,
                 UPI: student.upi,
-                Team: team?.teamName || 'No team',
+                'Team ID': team ? getTeamDisplayId(team) : 'No team',
                 'Check-in': checkInStatus,
                 Score: score
             };
@@ -175,7 +187,8 @@ export const exportTestResults = async (req, res) => {
         const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
 
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        res.setHeader('Content-Disposition', `attachment; filename="test_results_${testId}.xlsx"`);
+        const fileName = `test_results_${getSafeFileName(test.name)}.xlsx`;
+        res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
         res.status(200).send(buffer);
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
