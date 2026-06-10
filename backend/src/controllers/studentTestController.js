@@ -8,7 +8,6 @@ import { calculateDistance } from '../utils/geo.js';
 import crypto from 'crypto';
 
 const CHECK_IN_RADIUS_METERS = 500;
-const PRE_TEST_CHECK_IN_TTL_MS = 15 * 60 * 1000;
 const TEACHER_GPS_TTL_MS = 15 * 60 * 1000;
 const TEAM_MIN_SIZE = 3;
 const TEAM_MAX_SIZE = 4;
@@ -45,15 +44,22 @@ const serializeTeacherGpsStatus = (teacherGps) => {
     const timestamp = Number.parseInt(teacherGps?.timestamp, 10);
     const hasPosition = Boolean(teacherGps?.lat && teacherGps?.lng);
     const hasFreshTimestamp = Number.isFinite(timestamp) && Date.now() - timestamp <= TEACHER_GPS_TTL_MS;
+    const remainingMs = Number.isFinite(timestamp)
+        ? Math.max(0, timestamp + TEACHER_GPS_TTL_MS - Date.now())
+        : 0;
     const isReady = hasPosition && hasFreshTimestamp;
 
     return {
         isSet: hasPosition,
         isReady,
         status: isReady ? 'ready' : hasPosition ? 'expired' : 'missing',
-        updatedAt: Number.isFinite(timestamp) ? new Date(timestamp) : null
+        updatedAt: Number.isFinite(timestamp) ? new Date(timestamp) : null,
+        expiresAt: Number.isFinite(timestamp) ? new Date(timestamp + TEACHER_GPS_TTL_MS) : null,
+        remainingSeconds: Math.ceil(remainingMs / 1000)
     };
 };
+
+const getTeacherGpsTimestamp = (teacherGps) => teacherGps?.timestamp?.toString() || null;
 
 const getTeacherGpsForLobby = async () => {
     try {
@@ -75,6 +81,33 @@ const serializeTeam = (team, studentId) => {
         isReady: memberCount >= TEAM_MIN_SIZE && memberCount <= TEAM_MAX_SIZE,
         isLeader: leaderId?.toString() === studentId.toString()
     };
+};
+
+const getTeacherGpsWindow = (teacherGps) => {
+    const timestamp = Number.parseInt(teacherGps?.timestamp, 10);
+    const hasPosition = Boolean(teacherGps?.lat && teacherGps?.lng);
+    const hasFreshTimestamp = Number.isFinite(timestamp) && Date.now() - timestamp <= TEACHER_GPS_TTL_MS;
+
+    return {
+        timestamp: Number.isFinite(timestamp) ? teacherGps.timestamp.toString() : null,
+        isReady: hasPosition && hasFreshTimestamp
+    };
+};
+
+const cleanupPendingCheckInsForGpsWindow = async (teacherGps) => {
+    const gpsWindow = getTeacherGpsWindow(teacherGps);
+
+    if (!gpsWindow.isReady || !gpsWindow.timestamp) {
+        await CheckIn.deleteMany({ testId: null });
+        return gpsWindow;
+    }
+
+    await CheckIn.deleteMany({
+        testId: null,
+        teacherGpsTimestamp: { $ne: gpsWindow.timestamp }
+    });
+
+    return gpsWindow;
 };
 
 const getStableOptionOrder = (testId, teamId, questionSeq) => {
@@ -116,20 +149,14 @@ const addPassedMemberToResult = async (testId, teamId, studentId) => {
     const team = await Team.findById(teamId).select('members').lean();
     if (!team || team.members.length < TEAM_MIN_SIZE || team.members.length > TEAM_MAX_SIZE) return;
 
-    await Result.findOneAndUpdate(
+    await Result.updateOne(
         { testId, teamId },
-        {
-            $setOnInsert: {
-                answers: [],
-                totalScore: 0
-            },
-            $addToSet: { presentMembers: studentId }
-        },
-        { upsert: true, new: true }
+        { $addToSet: { presentMembers: studentId } }
     );
 };
 
-const getPassedMemberIds = async (testId, memberIds) => {
+const getPassedMemberIds = async (testId, members) => {
+    const memberIds = members.map((member) => member?._id || member).filter(Boolean);
     const passed = await CheckIn.find({
         testId,
         studentId: { $in: memberIds },
@@ -137,6 +164,80 @@ const getPassedMemberIds = async (testId, memberIds) => {
     }).select('studentId').lean();
 
     return passed.map((record) => record.studentId);
+};
+
+const hasPassedCheckInForTest = async (testId, studentId) => {
+    const currentCheckIn = await CheckIn.findOne({
+        testId,
+        studentId
+    }).select('status').lean();
+    if (currentCheckIn) {
+        return currentCheckIn.status === 'passed';
+    }
+
+    const teacherGps = await redisService.getTeacherGPS();
+    const gpsWindow = await cleanupPendingCheckInsForGpsWindow(teacherGps);
+    if (!gpsWindow.isReady || !gpsWindow.timestamp) return false;
+
+    const preTestCheckIn = await CheckIn.exists({
+        testId: null,
+        studentId,
+        status: 'passed',
+        teacherGpsTimestamp: gpsWindow.timestamp
+    });
+    return Boolean(preTestCheckIn);
+};
+
+const consumePreTestCheckInsForTeam = async (testId, team) => {
+    const teacherGps = await redisService.getTeacherGPS();
+    const gpsWindow = await cleanupPendingCheckInsForGpsWindow(teacherGps);
+    if (!gpsWindow.isReady || !gpsWindow.timestamp) return;
+
+    const memberIds = team.members.map((member) => member?._id || member).filter(Boolean);
+    const preTestCheckIns = await CheckIn.find({
+        testId: null,
+        studentId: { $in: memberIds },
+        status: 'passed',
+        teacherGpsTimestamp: gpsWindow.timestamp
+    }).lean();
+
+    if (preTestCheckIns.length === 0) return;
+
+    await CheckIn.bulkWrite(preTestCheckIns.map((checkIn) => ({
+        updateOne: {
+            filter: { testId, studentId: checkIn.studentId },
+            update: {
+                $set: {
+                    status: 'passed',
+                    distanceMeters: checkIn.distanceMeters,
+                    checkedAt: checkIn.checkedAt,
+                    teacherGpsTimestamp: checkIn.teacherGpsTimestamp || null
+                }
+            },
+            upsert: true
+        }
+    })));
+
+    await CheckIn.deleteMany({ _id: { $in: preTestCheckIns.map((checkIn) => checkIn._id) } });
+};
+
+const ensureResultForStartedTeam = async (testId, team, leaderId) => {
+    const presentMembers = await getPassedMemberIds(testId, team.members);
+
+    await Result.findOneAndUpdate(
+        { testId, teamId: team._id },
+        {
+            $setOnInsert: {
+                activeStudentId: leaderId,
+                answers: [],
+                totalScore: 0
+            },
+            $addToSet: {
+                presentMembers: { $each: presentMembers }
+            }
+        },
+        { upsert: true, new: true }
+    );
 };
 
 export const getLobbyStatus = async (req, res) => {
@@ -158,13 +259,27 @@ export const getLobbyStatus = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Student account not found.' });
         }
 
-        const checkIn = activeTest
-            ? await CheckIn.findOne({ testId: activeTest._id, studentId }).lean()
-            : await CheckIn.findOne({
-                testId: null,
-                studentId,
-                checkedAt: { $gt: new Date(Date.now() - PRE_TEST_CHECK_IN_TTL_MS) }
-            }).lean();
+        const gpsWindow = await cleanupPendingCheckInsForGpsWindow(teacherGps);
+        let checkIn = null;
+        if (activeTest) {
+            checkIn = await CheckIn.findOne({ testId: activeTest._id, studentId }).lean()
+                || (gpsWindow.isReady && gpsWindow.timestamp
+                    ? await CheckIn.findOne({
+                        testId: null,
+                        studentId,
+                        status: 'passed',
+                        teacherGpsTimestamp: gpsWindow.timestamp
+                    }).lean()
+                    : null);
+        } else {
+            checkIn = gpsWindow.isReady && gpsWindow.timestamp
+                ? await CheckIn.findOne({
+                    testId: null,
+                    studentId,
+                    teacherGpsTimestamp: gpsWindow.timestamp
+                }).lean()
+                : null;
+        }
 
         const effectiveFeedbackTest = activeTest ? null : feedbackTest;
         let feedbackSubmitted = false;
@@ -186,7 +301,8 @@ export const getLobbyStatus = async (req, res) => {
                 ? {
                     status: checkIn.status,
                     distanceMeters: checkIn.distanceMeters,
-                    checkedAt: checkIn.checkedAt
+                    checkedAt: checkIn.checkedAt,
+                    isPending: !checkIn.testId
                 }
                 : null,
             feedback: effectiveFeedbackTest
@@ -221,13 +337,15 @@ export const checkLocationAndReady = async (req, res) => {
     try {
         const teacherGps = await redisService.getTeacherGPS();
         if (!teacherGps?.lat || !teacherGps?.lng) {
+            await cleanupPendingCheckInsForGpsWindow(teacherGps);
             return res.status(400).json({ success: false, message: 'The teacher has not set the classroom GPS point yet.' });
         }
 
-        const timeDiff = Date.now() - parseInt(teacherGps.timestamp, 10);
-        if (timeDiff > TEACHER_GPS_TTL_MS) {
+        const gpsWindow = await cleanupPendingCheckInsForGpsWindow(teacherGps);
+        if (!gpsWindow.isReady) {
             return res.status(400).json({ success: false, message: 'The teacher GPS point has expired. Please ask the teacher to refresh it.' });
         }
+        const teacherGpsTimestamp = gpsWindow.timestamp;
 
         const activeTest = await getActivePublishedTest();
         const distance = calculateDistance(
@@ -241,11 +359,11 @@ export const checkLocationAndReady = async (req, res) => {
             ? await CheckIn.findOne({ testId: activeTest._id, studentId })
             : null;
 
-        if (existingCheckIn?.status === 'failed') {
+        if (existingCheckIn?.status === 'passed') {
             return res.json({
                 success: true,
-                status: 'failed',
-                message: 'Check-in already failed for this test. Your score for this test is 0.',
+                status: 'passed',
+                message: 'Check-in already completed for this test.',
                 distanceMeters: Math.round(existingCheckIn.distanceMeters || distance),
                 testPublished: !!activeTest,
                 testId: activeTest?._id || null
@@ -259,7 +377,8 @@ export const checkLocationAndReady = async (req, res) => {
                     {
                         status: 'failed',
                         distanceMeters: Math.round(distance),
-                        checkedAt: new Date()
+                        checkedAt: new Date(),
+                        teacherGpsTimestamp
                     },
                     { upsert: true, new: true }
                 );
@@ -269,7 +388,8 @@ export const checkLocationAndReady = async (req, res) => {
                     {
                         status: 'failed',
                         distanceMeters: Math.round(distance),
-                        checkedAt: new Date()
+                        checkedAt: new Date(),
+                        teacherGpsTimestamp
                     },
                     { upsert: true, new: true }
                 );
@@ -288,7 +408,8 @@ export const checkLocationAndReady = async (req, res) => {
         const passedCheckIn = {
             status: 'passed',
             distanceMeters: Math.round(distance),
-            checkedAt: new Date()
+            checkedAt: new Date(),
+            teacherGpsTimestamp
         };
 
         if (activeTest) {
@@ -354,6 +475,11 @@ export const fetchQuestionData = async (req, res) => {
             return res.status(403).json({ success: false, message: 'You are not a member of this team.' });
         }
 
+        const hasPassedCheckIn = await hasPassedCheckInForTest(testId, studentId);
+        if (!hasPassedCheckIn) {
+            return res.status(403).json({ success: false, message: 'GPS check-in is required before entering the test.' });
+        }
+
         const currentQuestion = test.questions.find((question) => question.seq === test.currentQuestionSeq);
         if (!currentQuestion) {
             return res.status(404).json({ success: false, message: 'Current question data was not found.' });
@@ -361,6 +487,15 @@ export const fetchQuestionData = async (req, res) => {
 
         const leaderId = team.leaderId?._id || team.leaderId;
         const isOperator = leaderId.toString() === studentId.toString();
+        if (isOperator) {
+            if (!team.lockedAt) {
+                team.lockedAt = new Date();
+                await team.save();
+            }
+            await consumePreTestCheckInsForTeam(testId, team);
+            await ensureResultForStartedTeam(testId, team, leaderId);
+        }
+
         const shuffledQuestion = getTeamQuestionOptions(currentQuestion, testId, teamId);
 
         return res.json({
@@ -405,6 +540,18 @@ export const submitAnswer = async (req, res) => {
         if (leaderId !== studentId.toString()) {
             return res.status(403).json({ success: false, message: 'Only the team leader device can submit answers.' });
         }
+
+        const hasPassedCheckIn = await hasPassedCheckInForTest(testId, studentId);
+        if (!hasPassedCheckIn) {
+            return res.status(403).json({ success: false, message: 'GPS check-in is required before submitting answers.' });
+        }
+
+        if (!team.lockedAt) {
+            team.lockedAt = new Date();
+            await team.save();
+        }
+        await consumePreTestCheckInsForTeam(testId, team);
+        await ensureResultForStartedTeam(testId, team, team.leaderId);
 
         if (!['A', 'B', 'C', 'D'].includes(selectedOption)) {
             return res.status(400).json({ success: false, message: 'Selected option must be A, B, C, or D.' });

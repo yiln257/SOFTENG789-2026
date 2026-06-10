@@ -1,11 +1,13 @@
 import { redisClient } from '../config/redis.js';
 
 export const setTeacherGPS = async (lat, lng) => {
+    const timestamp = Date.now().toString();
     await redisClient.hSet('teacher:gps', {
         lat: lat.toString(),
         lng: lng.toString(),
-        timestamp: Date.now().toString()
+        timestamp
     });
+    return timestamp;
 };
 
 export const getTeacherGPS = async () => {

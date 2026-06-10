@@ -12,6 +12,8 @@ const percent = (value, total) => {
 
 const getTeamDisplayId = (team) => team?.teamId || 'Unknown team';
 
+const getIdString = (value) => value?._id?.toString?.() || value?.toString?.() || '';
+
 const getSafeFileName = (value) => {
     return (value || 'Untitled Test')
         .toString()
@@ -58,10 +60,33 @@ export const getTestStatistics = async (req, res) => {
             }
         }));
         const questionMap = new Map(questionStats.map((question) => [question.seq, question]));
+        const resultByTeam = new Map(results.map((result) => [result.teamId.toString(), result]));
+        const passedStudentIds = new Set(
+            checkIns
+                .filter((item) => item.status === 'passed')
+                .map((item) => getIdString(item.studentId))
+                .filter(Boolean)
+        );
+        const getPresentCount = (team, result) => {
+            const presentIds = new Set(
+                (result?.presentMembers || [])
+                    .map((memberId) => getIdString(memberId))
+                    .filter(Boolean)
+            );
+
+            team?.members?.forEach((member) => {
+                const memberId = getIdString(member);
+                if (passedStudentIds.has(memberId)) {
+                    presentIds.add(memberId);
+                }
+            });
+
+            return presentIds.size;
+        };
 
         const feedbacks = [];
-        const teamResults = results.map((result) => {
-            result.answers.forEach((answer) => {
+        results.forEach((result) => {
+            result.answers?.forEach((answer) => {
                 const question = questionMap.get(answer.questionSeq);
                 if (!question) return;
 
@@ -83,17 +108,33 @@ export const getTestStatistics = async (req, res) => {
                     submittedAt: item.submittedAt
                 });
             });
+        });
 
-            const team = teamMap.get(result.teamId.toString());
+        const teamResults = teams.map((team) => {
+            const result = resultByTeam.get(team._id.toString());
             return {
-                teamObjectId: result.teamId,
+                teamObjectId: team._id,
                 teamId: getTeamDisplayId(team),
-                leader: team?.leaderId || null,
-                members: team?.members || [],
-                totalScore: result.totalScore || 0,
-                answeredQuestions: result.answers.length,
-                presentCount: result.presentMembers?.length || 0
+                leader: team.leaderId || null,
+                members: team.members || [],
+                totalScore: result?.totalScore || 0,
+                answeredQuestions: result?.answers?.length || 0,
+                presentCount: getPresentCount(team, result)
             };
+        });
+
+        results.forEach((result) => {
+            if (teamMap.has(result.teamId.toString())) return;
+
+            teamResults.push({
+                teamObjectId: result.teamId,
+                teamId: 'Unknown team',
+                leader: null,
+                members: [],
+                totalScore: result.totalScore || 0,
+                answeredQuestions: result.answers?.length || 0,
+                presentCount: result.presentMembers?.length || 0
+            });
         });
 
         questionStats.forEach((question) => {

@@ -15,10 +15,15 @@ const checkInSchema = new mongoose.Schema({
     checkedAt: {
         type: Date,
         default: Date.now
+    },
+    teacherGpsTimestamp: {
+        type: String,
+        default: null
     }
 }, { timestamps: true });
 
 checkInSchema.index({ testId: 1, studentId: 1 }, { unique: true });
 checkInSchema.index({ studentId: 1, status: 1 });
+checkInSchema.index({ studentId: 1, teacherGpsTimestamp: 1, status: 1 });
 
 export default mongoose.model('CheckIn', checkInSchema);

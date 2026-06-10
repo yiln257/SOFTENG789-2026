@@ -31,6 +31,10 @@ const teamSchema = new mongoose.Schema({
     isActive: {
         type: Boolean,
         default: true
+    },
+    lockedAt: {
+        type: Date,
+        default: null
     }
 }, { timestamps: true });
 

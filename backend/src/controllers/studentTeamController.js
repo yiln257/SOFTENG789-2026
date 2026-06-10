@@ -3,10 +3,12 @@ import Team from '../models/Team.js';
 import Test from '../models/Test.js';
 import Result from '../models/Result.js';
 import CheckIn from '../models/CheckIn.js';
+import * as redisService from '../services/redisService.js';
 import crypto from 'crypto';
 
 const TEAM_MIN_SIZE = 3;
 const TEAM_MAX_SIZE = 4;
+const TEACHER_GPS_TTL_MS = 15 * 60 * 1000;
 
 const teamPopulation = [
     { path: 'members', select: 'name upi' },
@@ -36,6 +38,68 @@ const getActivePublishedTest = () => {
     return Test.findOne({ status: 'published' }).sort({ createdAt: -1 });
 };
 
+const getTeacherGpsWindow = (teacherGps) => {
+    const timestamp = Number.parseInt(teacherGps?.timestamp, 10);
+    const hasPosition = Boolean(teacherGps?.lat && teacherGps?.lng);
+    const hasFreshTimestamp = Number.isFinite(timestamp) && Date.now() - timestamp <= TEACHER_GPS_TTL_MS;
+
+    return {
+        timestamp: Number.isFinite(timestamp) ? teacherGps.timestamp.toString() : null,
+        isReady: hasPosition && hasFreshTimestamp
+    };
+};
+
+const cleanupPendingCheckInsForGpsWindow = async (teacherGps) => {
+    const gpsWindow = getTeacherGpsWindow(teacherGps);
+
+    if (!gpsWindow.isReady || !gpsWindow.timestamp) {
+        await CheckIn.deleteMany({ testId: null });
+        return gpsWindow;
+    }
+
+    await CheckIn.deleteMany({
+        testId: null,
+        teacherGpsTimestamp: { $ne: gpsWindow.timestamp }
+    });
+
+    return gpsWindow;
+};
+
+const hasPassedGpsCheckIn = async (studentId, activeTest = null) => {
+    const teacherGps = await redisService.getTeacherGPS();
+    const gpsWindow = await cleanupPendingCheckInsForGpsWindow(teacherGps);
+
+    if (activeTest) {
+        const currentCheckIn = await CheckIn.findOne({
+            testId: activeTest._id,
+            studentId
+        }).select('status').lean();
+        if (currentCheckIn) {
+            return currentCheckIn.status === 'passed';
+        }
+
+        if (!gpsWindow.isReady || !gpsWindow.timestamp) return false;
+
+        const preTestCheckIn = await CheckIn.exists({
+            testId: null,
+            studentId,
+            status: 'passed',
+            teacherGpsTimestamp: gpsWindow.timestamp
+        });
+        return Boolean(preTestCheckIn);
+    }
+
+    if (!gpsWindow.isReady || !gpsWindow.timestamp) return false;
+
+    const checkIn = await CheckIn.exists({
+        testId: null,
+        studentId,
+        status: 'passed',
+        teacherGpsTimestamp: gpsWindow.timestamp
+    });
+    return Boolean(checkIn);
+};
+
 const generateTeamId = () => {
     return crypto.randomInt(0, 100000000).toString().padStart(8, '0');
 };
@@ -52,7 +116,7 @@ const generateUniqueTeamId = async () => {
 
 const normalizeTeamId = (teamId) => teamId?.toString().trim();
 
-const createOrUpdateResultForTeam = async (testId, team) => {
+const syncPassedMembersForExistingResult = async (testId, team) => {
     if (!testId || !team || !isTeamReady(team)) return;
 
     const memberIds = team.members.map((id) => id.toString());
@@ -62,19 +126,11 @@ const createOrUpdateResultForTeam = async (testId, team) => {
         status: 'passed'
     }).select('studentId').lean();
 
-    await Result.findOneAndUpdate(
+    if (passedCheckIns.length === 0) return;
+
+    await Result.updateOne(
         { testId, teamId: team._id },
-        {
-            $setOnInsert: {
-                activeStudentId: team.leaderId,
-                answers: [],
-                totalScore: 0
-            },
-            $addToSet: {
-                presentMembers: { $each: passedCheckIns.map((record) => record.studentId) }
-            }
-        },
-        { upsert: true, new: true }
+        { $addToSet: { presentMembers: { $each: passedCheckIns.map((record) => record.studentId) } } }
     );
 };
 
@@ -90,6 +146,20 @@ const emitTeamUpdate = (req, team) => {
         });
     });
     io.to(`team_${team._id}`).emit('TEAM_UPDATED', { team: serializeTeam(team, team.leaderId?._id || team.leaderId) });
+};
+
+const emitTeamDissolved = (req, team, message) => {
+    const io = req.app.get('io');
+    if (!io || !team) return;
+
+    const memberIds = team.members.map((member) => member._id || member);
+    memberIds.forEach((memberId) => {
+        io.to(`user_${memberId.toString()}`).emit('TEAM_UPDATED', {
+            team: null,
+            message
+        });
+    });
+    io.to(`team_${team._id}`).emit('TEAM_UPDATED', { team: null, message });
 };
 
 export const getTeamInfo = async (req, res) => {
@@ -131,6 +201,12 @@ export const createTeam = async (req, res) => {
         }
         if (leader.teamId) {
             return res.status(409).json({ success: false, message: 'You are already in a team for this test.' });
+        }
+
+        const activeTest = await getActivePublishedTest();
+        const hasPassedCheckIn = await hasPassedGpsCheckIn(leaderId, activeTest);
+        if (!hasPassedCheckIn) {
+            return res.status(403).json({ success: false, message: 'Please complete GPS check-in before creating a team.' });
         }
 
         const teamId = await generateUniqueTeamId();
@@ -175,9 +251,18 @@ export const joinTeam = async (req, res) => {
             return res.status(409).json({ success: false, message: 'You are already in a team.' });
         }
 
+        const activeTest = await getActivePublishedTest();
+        const hasPassedCheckIn = await hasPassedGpsCheckIn(studentId, activeTest);
+        if (!hasPassedCheckIn) {
+            return res.status(403).json({ success: false, message: 'Please complete GPS check-in before joining a team.' });
+        }
+
         const team = await Team.findOne({ teamId, isActive: true });
         if (!team) {
             return res.status(404).json({ success: false, message: `No team was found for Team ID ${teamId}.` });
+        }
+        if (team.lockedAt) {
+            return res.status(409).json({ success: false, message: 'This team has already entered the test.' });
         }
 
         const memberIds = team.members.map((memberId) => memberId.toString());
@@ -190,7 +275,6 @@ export const joinTeam = async (req, res) => {
 
         team.members.push(student._id);
 
-        const activeTest = await getActivePublishedTest();
         if (!team.testId && activeTest && isTeamReady(team)) {
             team.testId = activeTest._id;
         }
@@ -199,7 +283,7 @@ export const joinTeam = async (req, res) => {
         student.teamId = team._id;
         await student.save();
 
-        await createOrUpdateResultForTeam(team.testId || activeTest?._id, team);
+        await syncPassedMembersForExistingResult(team.testId || activeTest?._id, team);
 
         const populatedTeam = await Team.findById(team._id).populate(teamPopulation);
         emitTeamUpdate(req, populatedTeam);
@@ -208,6 +292,75 @@ export const joinTeam = async (req, res) => {
             success: true,
             message: `Joined Team ID ${teamId}.`,
             team: serializeTeam(populatedTeam, studentId)
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+export const dissolveTeam = async (req, res) => {
+    const studentId = req.user.id;
+
+    try {
+        const student = await User.findById(studentId).select('teamId').lean();
+        if (!student) {
+            return res.status(404).json({ success: false, message: 'Student account not found.' });
+        }
+        if (!student.teamId) {
+            return res.status(404).json({ success: false, message: 'You are not currently in a team.' });
+        }
+
+        const team = await Team.findOne({ _id: student.teamId, isActive: true }).populate(teamPopulation);
+        if (!team) {
+            await User.findByIdAndUpdate(studentId, { $set: { teamId: null } });
+            return res.status(404).json({ success: false, message: 'Your team is no longer active.' });
+        }
+
+        const leaderId = team.leaderId?._id || team.leaderId;
+        if (leaderId.toString() !== studentId.toString()) {
+            return res.status(403).json({ success: false, message: 'Only the leader device can dissolve the team.' });
+        }
+
+        if (team.lockedAt) {
+            return res.status(409).json({ success: false, message: 'This team has already entered the test and can no longer be dissolved.' });
+        }
+
+        const answeredResult = await Result.exists({
+            teamId: team._id,
+            'answers.0': { $exists: true }
+        });
+        if (answeredResult) {
+            return res.status(409).json({ success: false, message: 'This team has already submitted answers and can no longer be dissolved.' });
+        }
+
+        const deleteResult = await Team.deleteOne({
+            _id: team._id,
+            leaderId,
+            isActive: true,
+            lockedAt: null
+        });
+
+        if (deleteResult.deletedCount === 0) {
+            return res.status(409).json({ success: false, message: 'This team can no longer be dissolved.' });
+        }
+
+        const memberIds = team.members.map((member) => member._id || member);
+        await User.updateMany({ teamId: team._id }, { $set: { teamId: null } });
+        await Result.deleteMany({
+            teamId: team._id,
+            $or: [
+                { answers: { $exists: false } },
+                { answers: { $size: 0 } }
+            ]
+        });
+
+        const message = 'The team has been dissolved.';
+        emitTeamDissolved(req, team, message);
+
+        res.json({
+            success: true,
+            message,
+            team: null
         });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });

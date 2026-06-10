@@ -5,6 +5,13 @@ import { useSocket } from '../../hooks/useSocket';
 import { useGeoLocation } from '../../hooks/useGeoLocation';
 import request from '../../api/request';
 
+const formatCountdown = (seconds) => {
+    const safeSeconds = Math.max(0, seconds);
+    const minutes = Math.floor(safeSeconds / 60).toString().padStart(2, '0');
+    const remainingSeconds = (safeSeconds % 60).toString().padStart(2, '0');
+    return `${minutes}:${remainingSeconds}`;
+};
+
 export default function StudentDashboard() {
     const { user, logout, updateUser } = useAuth();
     const navigate = useNavigate();
@@ -16,7 +23,9 @@ export default function StudentDashboard() {
     const [teamMsg, setTeamMsg] = useState('');
     const [creatingTeam, setCreatingTeam] = useState(false);
     const [joiningTeam, setJoiningTeam] = useState(false);
+    const [dissolvingTeam, setDissolvingTeam] = useState(false);
     const [teamIdInput, setTeamIdInput] = useState('');
+    const [now, setNow] = useState(Date.now());
 
     const fetchLobby = async () => {
         try {
@@ -37,6 +46,11 @@ export default function StudentDashboard() {
 
     useEffect(() => {
         fetchLobby();
+    }, []);
+
+    useEffect(() => {
+        const timer = window.setInterval(() => setNow(Date.now()), 1000);
+        return () => window.clearInterval(timer);
     }, []);
 
     useEffect(() => {
@@ -63,23 +77,62 @@ export default function StudentDashboard() {
         }
     }, [socket, lobby?.team?._id, user]);
 
+    const teacherGpsRemainingSeconds = useMemo(() => {
+        if (!lobby?.teacherGps?.expiresAt) return null;
+
+        const expiresAt = new Date(lobby.teacherGps.expiresAt).getTime();
+        if (!Number.isFinite(expiresAt)) return null;
+
+        return Math.max(0, Math.ceil((expiresAt - now) / 1000));
+    }, [lobby?.teacherGps?.expiresAt, now]);
+
+    const isTeacherGpsLocallyReady = Boolean(lobby?.teacherGps?.isReady && teacherGpsRemainingSeconds !== 0);
+    const isPendingCheckInExpired = Boolean(lobby?.checkIn?.isPending && teacherGpsRemainingSeconds === 0);
+    const effectiveCheckInStatus = isPendingCheckInExpired ? null : lobby?.checkIn?.status;
+    const hasCheckedIn = effectiveCheckInStatus === 'passed';
+
     const checkInBadge = useMemo(() => {
-        if (!lobby?.checkIn) return <span className="badge">Not checked in</span>;
-        if (lobby.checkIn.status === 'passed') return <span className="badge success">Checked in</span>;
+        if (!effectiveCheckInStatus) {
+            return isTeacherGpsLocallyReady
+                ? <span className="badge success">Ready</span>
+                : <span className="badge">Waiting</span>;
+        }
+        if (effectiveCheckInStatus === 'passed') return <span className="badge success">Checked in</span>;
         return <span className="badge danger">Failed</span>;
-    }, [lobby]);
+    }, [effectiveCheckInStatus, isTeacherGpsLocallyReady]);
 
     const teacherGpsMessage = useMemo(() => {
+        if (effectiveCheckInStatus === 'passed') {
+            return 'GPS check-in completed successfully.';
+        }
+
+        if (effectiveCheckInStatus === 'failed') {
+            return 'Check-in failed. You can try again.';
+        }
+
+        if (lobby?.teacherGps?.status === 'ready' && teacherGpsRemainingSeconds === 0) {
+            return 'Waiting for the teacher to set classroom GPS.';
+        }
+
         if (lobby?.teacherGps?.status === 'ready') {
-            return 'The teacher has set the classroom GPS point. You can check in now.';
+            return 'Classroom GPS is active. Check in now.';
         }
 
         if (lobby?.teacherGps?.status === 'expired') {
-            return 'The classroom GPS point has expired. Please wait for the teacher to refresh it before checking in.';
+            return 'Waiting for the teacher to set classroom GPS.';
         }
 
-        return 'The teacher has not set the classroom GPS point yet. Please wait before checking in.';
-    }, [lobby?.teacherGps?.status]);
+        return 'Waiting for the teacher to set classroom GPS.';
+    }, [effectiveCheckInStatus, lobby?.teacherGps?.status, teacherGpsRemainingSeconds]);
+
+    const teacherGpsCountdown = useMemo(() => {
+        if (hasCheckedIn) return null;
+        if (teacherGpsRemainingSeconds === null) return null;
+
+        return isTeacherGpsLocallyReady
+            ? `Expires in ${formatCountdown(teacherGpsRemainingSeconds)}`
+            : null;
+    }, [hasCheckedIn, isTeacherGpsLocallyReady, teacherGpsRemainingSeconds]);
 
     const handleCheckIn = async () => {
         try {
@@ -97,11 +150,16 @@ export default function StudentDashboard() {
 
     const handleCreateTeam = async () => {
         setTeamMsg('');
+
+        if (!hasCheckedIn) {
+            return;
+        }
+
         setCreatingTeam(true);
 
         try {
             const res = await request.post('/student/team');
-            setTeamMsg(res.message || 'Team ID created.');
+            setTeamMsg('');
             updateUser({ teamId: res.team?._id || null, team: res.team || null });
             await fetchLobby();
         } catch (error) {
@@ -114,11 +172,16 @@ export default function StudentDashboard() {
     const handleJoinTeam = async (event) => {
         event.preventDefault();
         setTeamMsg('');
+
+        if (!hasCheckedIn) {
+            return;
+        }
+
         setJoiningTeam(true);
 
         try {
             const res = await request.post('/student/team/join', { teamId: teamIdInput });
-            setTeamMsg(res.message || 'Joined team.');
+            setTeamMsg('');
             setTeamIdInput('');
             updateUser({ teamId: res.team?._id || null, team: res.team || null });
             await fetchLobby();
@@ -126,6 +189,34 @@ export default function StudentDashboard() {
             setTeamMsg(error.message);
         } finally {
             setJoiningTeam(false);
+        }
+    };
+
+    const handleDissolveTeam = async () => {
+        setTeamMsg('');
+
+        if (!lobby?.team?.isLeader) {
+            return;
+        }
+
+        if (lobby.team.lockedAt) {
+            setTeamMsg('This team has already entered the test and can no longer be dissolved.');
+            return;
+        }
+
+        setDissolvingTeam(true);
+
+        try {
+            await request.delete('/student/team');
+            setTeamMsg('');
+            setTeamIdInput('');
+            updateUser({ teamId: null, team: null });
+            await fetchLobby();
+        } catch (error) {
+            setTeamMsg(error.message);
+            await fetchLobby();
+        } finally {
+            setDissolvingTeam(false);
         }
     };
 
@@ -143,9 +234,12 @@ export default function StudentDashboard() {
 
     const feedbackEnabled = lobby?.feedback?.available && !lobby?.feedback?.submitted;
     const isTeamReady = Boolean(lobby?.team?.isReady);
-    const canStartTeamTest = Boolean(isTeamReady && lobby?.activeTest);
-    const hasCheckedIn = lobby?.checkIn?.status === 'passed';
+    const canStartTeamTest = Boolean(hasCheckedIn && isTeamReady && lobby?.activeTest);
     const teamTestMessage = useMemo(() => {
+        if (lobby?.activeTest && !hasCheckedIn) {
+            return 'The teacher has published the test. Please complete GPS check-in before starting.';
+        }
+
         if (lobby?.activeTest && !lobby?.team) {
             return 'The teacher has published the test. Please complete team creation before starting.';
         }
@@ -159,9 +253,9 @@ export default function StudentDashboard() {
         }
 
         return 'The teacher has not published the test yet. Please wait.';
-    }, [lobby?.activeTest, lobby?.team]);
+    }, [hasCheckedIn, lobby?.activeTest, lobby?.team]);
 
-    const teamActionBusy = creatingTeam || joiningTeam;
+    const teamActionBusy = creatingTeam || joiningTeam || dissolvingTeam;
     const displayTeamId = lobby?.team?.teamId || '';
 
     if (loading) {
@@ -181,7 +275,25 @@ export default function StudentDashboard() {
             <section className="grid student-dashboard-steps">
                 <article className="card stack">
                     <div className="row">
-                        <h2>Step 1: Team Creation</h2>
+                        <h2>Step 1: Check-in</h2>
+                        <div className="spacer" />
+                        {checkInBadge}
+                    </div>
+                    <p className="muted">{teacherGpsMessage}</p>
+                    {teacherGpsCountdown && <p className="muted">{teacherGpsCountdown}</p>}
+                    <button
+                        className="btn step-action-button"
+                        onClick={handleCheckIn}
+                        disabled={hasCheckedIn || isLocating || !isTeacherGpsLocallyReady}
+                    >
+                        Check In with GPS
+                    </button>
+                    {geoError && <div className="error">{geoError}</div>}
+                </article>
+
+                <article className="card stack">
+                    <div className="row">
+                        <h2>Step 2: Team Creation</h2>
                         <div className="spacer" />
                         <span className={isTeamReady ? 'badge success' : 'badge'}>
                             {lobby?.team ? isTeamReady ? 'Ready' : 'Waiting for members' : 'Open'}
@@ -219,6 +331,20 @@ export default function StudentDashboard() {
                                     })}
                                 </tbody>
                             </table>
+                            {lobby.team.isLeader && (
+                                <button
+                                    className="btn danger step-action-button"
+                                    type="button"
+                                    disabled={teamActionBusy || Boolean(lobby.team.lockedAt)}
+                                    onClick={handleDissolveTeam}
+                                >
+                                    {dissolvingTeam ? 'Dissolving...' : 'Dissolve Team'}
+                                </button>
+                            )}
+                            {lobby.team.isLeader && lobby.team.lockedAt && (
+                                <div className="muted">This team has entered the test and can no longer be dissolved.</div>
+                            )}
+                            {teamMsg && <div className="error">{teamMsg}</div>}
                         </div>
                     ) : (
                         <div className="stack">
@@ -230,15 +356,16 @@ export default function StudentDashboard() {
                                     placeholder="Team ID"
                                     value={teamIdInput}
                                     onChange={(event) => setTeamIdInput(event.target.value.replace(/\D/g, '').slice(0, 8))}
+                                    disabled={!hasCheckedIn || teamActionBusy}
                                     required
                                 />
-                                <button className="btn" type="submit" disabled={teamActionBusy || teamIdInput.length !== 8}>
+                                <button className="btn" type="submit" disabled={!hasCheckedIn || teamActionBusy || teamIdInput.length !== 8}>
                                     {joiningTeam ? 'Joining...' : 'Join Team'}
                                 </button>
                                 <button
                                     className="btn team-id-create-button"
                                     type="button"
-                                    disabled={teamActionBusy}
+                                    disabled={!hasCheckedIn || teamActionBusy}
                                     onClick={handleCreateTeam}
                                 >
                                     {creatingTeam ? 'Creating...' : 'Create Team ID'}
@@ -247,23 +374,6 @@ export default function StudentDashboard() {
                             {teamMsg && <div className="error">{teamMsg}</div>}
                         </div>
                     )}
-                </article>
-
-                <article className="card stack">
-                    <div className="row">
-                        <h2>Step 2: Check-in</h2>
-                        <div className="spacer" />
-                        {checkInBadge}
-                    </div>
-                    <p className="muted">{teacherGpsMessage}</p>
-                    <button
-                        className="btn step-action-button"
-                        onClick={handleCheckIn}
-                        disabled={hasCheckedIn || isLocating || !lobby?.teacherGps?.isReady}
-                    >
-                        Check In with GPS
-                    </button>
-                    {geoError && <div className="error">{geoError}</div>}
                 </article>
 
                 <article className="card stack">
