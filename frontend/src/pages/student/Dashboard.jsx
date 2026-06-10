@@ -236,10 +236,6 @@ export default function StudentDashboard() {
     const isTeamReady = Boolean(lobby?.team?.isReady);
     const canStartTeamTest = Boolean(hasCheckedIn && isTeamReady && lobby?.activeTest);
     const teamTestMessage = useMemo(() => {
-        if (lobby?.activeTest && !hasCheckedIn) {
-            return 'The teacher has published the test. Please complete GPS check-in before starting.';
-        }
-
         if (lobby?.activeTest && !lobby?.team) {
             return 'The teacher has published the test. Please complete team creation before starting.';
         }
@@ -253,7 +249,7 @@ export default function StudentDashboard() {
         }
 
         return 'The teacher has not published the test yet. Please wait.';
-    }, [hasCheckedIn, lobby?.activeTest, lobby?.team]);
+    }, [lobby?.activeTest, lobby?.team]);
 
     const teamActionBusy = creatingTeam || joiningTeam || dissolvingTeam;
     const displayTeamId = lobby?.team?.teamId || '';
@@ -300,6 +296,7 @@ export default function StudentDashboard() {
                         </span>
                     </div>
                     <p className="muted">
+                        {!hasCheckedIn && 'Please complete GPS check-in before starting. '}
                         Only one device in your team needs to create the Team ID. Other members should enter the same Team ID to join. Teams must have 3-4 students.
                     </p>
 

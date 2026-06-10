@@ -101,7 +101,7 @@ button {
 }
 
 .student-dashboard-steps .team-id-create-button {
-    margin-left: auto;
+    margin-left: 0;
 }
 
 .team-id-panel {
@@ -562,6 +562,11 @@ button {
     background: #fee2e2;
     border-color: #fca5a5;
     color: #991b1b;
+}
+
+.option-btn.correct:disabled,
+.option-btn.wrong:disabled {
+    opacity: 1;
 }
 
 .option-letter {

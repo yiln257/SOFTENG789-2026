@@ -25,6 +25,13 @@ export default function StudentLiveTest() {
     const progress = Math.min((currentSeq / Math.max(totalQuestions, 1)) * 100, 100);
     const remainingAttempts = isLocked ? 0 : Math.max(3 - attempts, 0);
 
+    const applyAnswerState = (answerState, shouldShowMessage = isOperator) => {
+        setOptionStates(answerState?.optionStates || {});
+        setAttempts(Number(answerState?.attempts) || 0);
+        setIsLocked(Boolean(answerState?.isLocked));
+        setMessage(shouldShowMessage ? answerState?.message || '' : '');
+    };
+
     const fetchTeam = async () => {
         if (teamId) return teamId;
         const res = await request.get('/student/team-info');
@@ -53,9 +60,7 @@ export default function StudentLiveTest() {
                 setTotalQuestions(res.totalQuestions);
                 setQuestion(res.question);
                 setTeam(res.team);
-                setOptionStates({});
-                setAttempts(0);
-                setIsLocked(false);
+                applyAnswerState(res.answerState, res.isOperator);
             }
         } catch (error) {
             setMessage(error.message);
@@ -67,6 +72,15 @@ export default function StudentLiveTest() {
     useEffect(() => {
         fetchQuestionAndLock();
     }, [testId, teamId]);
+
+    useEffect(() => {
+        if (!socket || !teamId) return undefined;
+
+        const studentId = user?.id || user?._id;
+        socket.emit('join_team', { teamId, studentId });
+
+        return undefined;
+    }, [socket, teamId, user]);
 
     useEffect(() => {
         if (!socket) return undefined;
@@ -84,14 +98,24 @@ export default function StudentLiveTest() {
             }
         };
 
+        const handleTeamAnswerUpdated = (data) => {
+            if (String(data.testId) !== String(testId)) return;
+            if (String(data.teamId) !== String(teamId)) return;
+            if (Number(data.seq) !== Number(currentSeq)) return;
+
+            applyAnswerState(data.answerState, isOperator);
+        };
+
         socket.on('CHANGE_QUESTION', handleChangeQuestion);
         socket.on('TEST_ENDED', handleTestEnded);
+        socket.on('TEAM_ANSWER_UPDATED', handleTeamAnswerUpdated);
 
         return () => {
             socket.off('CHANGE_QUESTION', handleChangeQuestion);
             socket.off('TEST_ENDED', handleTestEnded);
+            socket.off('TEAM_ANSWER_UPDATED', handleTeamAnswerUpdated);
         };
-    }, [socket, testId, navigate, teamId]);
+    }, [socket, testId, navigate, teamId, currentSeq, isOperator]);
 
     const handleOptionSelect = async (selectedOption) => {
         if (!isOperator || isLocked || optionStates[selectedOption] === 'wrong') return;
@@ -105,23 +129,7 @@ export default function StudentLiveTest() {
             });
 
             if (res.success) {
-                setAttempts(res.attempts);
-
-                if (res.isCorrect) {
-                    setOptionStates((prev) => ({ ...prev, [selectedOption]: 'correct' }));
-                    setIsLocked(true);
-                    setMessage(`Correct. Score earned: ${res.scoreEarned}. Wait for the next question.`);
-                } else if (res.isExhausted) {
-                    setIsLocked(true);
-                    setOptionStates((prev) => ({
-                        ...prev,
-                        [selectedOption]: 'wrong'
-                    }));
-                    setMessage('No attempts left. Wait for the next question.');
-                } else {
-                    setOptionStates((prev) => ({ ...prev, [selectedOption]: 'wrong' }));
-                    setMessage('Incorrect. Please try again.');
-                }
+                applyAnswerState(res.answerState, true);
             }
         } catch (error) {
             setMessage(error.message);
@@ -152,12 +160,23 @@ export default function StudentLiveTest() {
         );
     };
 
-    const renderReadOnlyOption = ([key, value]) => (
-        <button key={key} className="btn option-btn readonly-option" type="button" disabled>
-            <span className="option-letter">{key}</span>
-            <span>{value}</span>
-        </button>
-    );
+    const renderReadOnlyOption = ([key, value]) => {
+        const state = optionStates[key];
+        const className = [
+            'btn',
+            'option-btn',
+            'readonly-option',
+            state === 'correct' ? 'correct' : '',
+            state === 'wrong' ? 'wrong' : ''
+        ].filter(Boolean).join(' ');
+
+        return (
+            <button key={key} className={className} type="button" disabled>
+                <span className="option-letter">{key}</span>
+                <span>{value}</span>
+            </button>
+        );
+    };
 
     if (loading) {
         return <main className="app-shell">Loading test...</main>;

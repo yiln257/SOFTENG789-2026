@@ -40,3 +40,18 @@ export const getQuestionAttempts = async (testId, teamId, seq) => {
     const attempts = await redisClient.get(key);
     return attempts ? parseInt(attempts, 10) : 0;
 };
+
+const getQuestionAnswerStateKey = (testId, teamId, seq) => {
+    return `test:${testId}:team:${teamId}:q:${seq}:answer_state`;
+};
+
+export const setQuestionAnswerState = async (testId, teamId, seq, state) => {
+    const key = getQuestionAnswerStateKey(testId, teamId, seq);
+    await redisClient.set(key, JSON.stringify(state), { EX: 8 * 60 * 60 });
+};
+
+export const getQuestionAnswerState = async (testId, teamId, seq) => {
+    const key = getQuestionAnswerStateKey(testId, teamId, seq);
+    const state = await redisClient.get(key);
+    return state ? JSON.parse(state) : null;
+};

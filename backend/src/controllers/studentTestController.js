@@ -143,6 +143,44 @@ const getTeamQuestionOptions = (question, testId, teamId) => {
     return { options, displayToOriginal, correctDisplayAnswer };
 };
 
+const getAnswerStateForQuestion = async (testId, teamId, seq) => {
+    const savedState = await redisService.getQuestionAnswerState(testId, teamId, seq);
+    if (savedState) return savedState;
+
+    return {
+        seq: parseInt(seq, 10),
+        attempts: await redisService.getQuestionAttempts(testId, teamId, seq),
+        optionStates: {},
+        isLocked: false,
+        message: ''
+    };
+};
+
+const buildAnswerState = ({ seq, attempts, selectedOption, previousState, isCorrect, isExhausted, scoreEarned }) => {
+    const optionStates = { ...(previousState?.optionStates || {}) };
+
+    if (isCorrect) {
+        optionStates[selectedOption] = 'correct';
+    } else {
+        optionStates[selectedOption] = 'wrong';
+    }
+
+    let message = 'Incorrect. Please try again.';
+    if (isCorrect) {
+        message = `Correct. Score earned: ${scoreEarned}. Wait for the next question.`;
+    } else if (isExhausted) {
+        message = 'No attempts left. Wait for the next question.';
+    }
+
+    return {
+        seq: parseInt(seq, 10),
+        attempts,
+        optionStates,
+        isLocked: isCorrect || isExhausted,
+        message
+    };
+};
+
 const addPassedMemberToResult = async (testId, teamId, studentId) => {
     if (!testId || !teamId || !studentId) return;
 
@@ -497,6 +535,7 @@ export const fetchQuestionData = async (req, res) => {
         }
 
         const shuffledQuestion = getTeamQuestionOptions(currentQuestion, testId, teamId);
+        const answerState = await getAnswerStateForQuestion(testId, teamId, test.currentQuestionSeq);
 
         return res.json({
             success: true,
@@ -507,6 +546,7 @@ export const fetchQuestionData = async (req, res) => {
                 seq: currentQuestion.seq,
                 options: shuffledQuestion.options
             },
+            answerState,
             team: serializeTeam(team, studentId)
         });
     } catch (error) {
@@ -573,6 +613,7 @@ export const submitAnswer = async (req, res) => {
             return res.status(409).json({ success: false, message: 'This question has already been finalized for your team.' });
         }
 
+        const previousAnswerState = await redisService.getQuestionAnswerState(testId, teamId, seq);
         const attempts = await redisService.incrementQuestionAttempts(testId, teamId, seq);
         const isCorrect = originalSelectedOption === questionInfo.correctAnswer;
         const isExhausted = !isCorrect && attempts >= 3;
@@ -607,12 +648,32 @@ export const submitAnswer = async (req, res) => {
             await resultDoc.save();
         }
 
+        const answerState = buildAnswerState({
+            seq,
+            attempts,
+            selectedOption,
+            previousState: previousAnswerState,
+            isCorrect,
+            isExhausted,
+            scoreEarned
+        });
+
+        await redisService.setQuestionAnswerState(testId, teamId, seq, answerState);
+
+        req.app.get('io')?.to(`team_${teamId}`).emit('TEAM_ANSWER_UPDATED', {
+            testId,
+            teamId,
+            seq: parseInt(seq, 10),
+            answerState
+        });
+
         res.json({
             success: true,
             isCorrect,
             isExhausted,
             scoreEarned,
-            attempts
+            attempts,
+            answerState
         });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
